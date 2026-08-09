@@ -1,0 +1,261 @@
+{
+  "id": 2,
+  "title": "春晓 · B",
+  "letter": "B",
+  "poem": "春晓",
+  "difficulty": 1,
+  "tiles": [
+    {
+      "type": "bear",
+      "col": 0,
+      "row": 0,
+      "layer": 0
+    },
+    {
+      "type": "rabbit",
+      "col": 1,
+      "row": 0,
+      "layer": 0
+    },
+    {
+      "type": "book_red",
+      "col": 2,
+      "row": 0,
+      "layer": 0
+    },
+    {
+      "type": "book_red",
+      "col": 3,
+      "row": 0,
+      "layer": 0
+    },
+    {
+      "type": "rabbit",
+      "col": 0,
+      "row": 1,
+      "layer": 0
+    },
+    {
+      "type": "rabbit",
+      "col": 4,
+      "row": 1,
+      "layer": 0
+    },
+    {
+      "type": "book_red",
+      "col": 0,
+      "row": 2,
+      "layer": 0
+    },
+    {
+      "type": "bear",
+      "col": 4,
+      "row": 2,
+      "layer": 0
+    },
+    {
+      "type": "book_green",
+      "col": 0,
+      "row": 3,
+      "layer": 0
+    },
+    {
+      "type": "book_blue",
+      "col": 1,
+      "row": 3,
+      "layer": 0
+    },
+    {
+      "type": "book_blue",
+      "col": 2,
+      "row": 3,
+      "layer": 0
+    },
+    {
+      "type": "book_green",
+      "col": 3,
+      "row": 3,
+      "layer": 0
+    },
+    {
+      "type": "bear",
+      "col": 0,
+      "row": 4,
+      "layer": 0
+    },
+    {
+      "type": "book_blue",
+      "col": 4,
+      "row": 4,
+      "layer": 0
+    },
+    {
+      "type": "book_green",
+      "col": 0,
+      "row": 5,
+      "layer": 0
+    },
+    {
+      "type": "book_blue",
+      "col": 4,
+      "row": 5,
+      "layer": 0
+    },
+    {
+      "type": "book_red",
+      "col": 0,
+      "row": 6,
+      "layer": 0
+    },
+    {
+      "type": "book_blue",
+      "col": 1,
+      "row": 6,
+      "layer": 0
+    },
+    {
+      "type": "bear",
+      "col": 2,
+      "row": 6,
+      "layer": 0
+    },
+    {
+      "type": "book_blue",
+      "col": 3,
+      "row": 6,
+      "layer": 0
+    },
+    {
+      "type": "book_red",
+      "col": 2,
+      "row": 0,
+      "layer": 1
+    },
+    {
+      "type": "book_blue",
+      "col": 3,
+      "row": 0,
+      "layer": 1
+    },
+    {
+      "type": "book_green",
+      "col": 4,
+      "row": 1,
+      "layer": 1
+    },
+    {
+      "type": "book_green",
+      "col": 4,
+      "row": 2,
+      "layer": 1
+    },
+    {
+      "type": "book_red",
+      "col": 0,
+      "row": 3,
+      "layer": 1
+    },
+    {
+      "type": "book_red",
+      "col": 1,
+      "row": 3,
+      "layer": 1
+    },
+    {
+      "type": "rabbit",
+      "col": 2,
+      "row": 3,
+      "layer": 1
+    },
+    {
+      "type": "book_green",
+      "col": 3,
+      "row": 3,
+      "layer": 1
+    },
+    {
+      "type": "book_red",
+      "col": 4,
+      "row": 4,
+      "layer": 1
+    },
+    {
+      "type": "book_green",
+      "col": 1,
+      "row": 6,
+      "layer": 1
+    },
+    {
+      "type": "bear",
+      "col": 2,
+      "row": 6,
+      "layer": 1
+    },
+    {
+      "type": "book_red",
+      "col": 3,
+      "row": 6,
+      "layer": 1
+    },
+    {
+      "type": "book_blue",
+      "col": 2,
+      "row": 0,
+      "layer": 2
+    },
+    {
+      "type": "bear",
+      "col": 0,
+      "row": 1,
+      "layer": 2
+    },
+    {
+      "type": "bear",
+      "col": 4,
+      "row": 1,
+      "layer": 2
+    },
+    {
+      "type": "bear",
+      "col": 4,
+      "row": 2,
+      "layer": 2
+    },
+    {
+      "type": "rabbit",
+      "col": 0,
+      "row": 3,
+      "layer": 2
+    },
+    {
+      "type": "bear",
+      "col": 1,
+      "row": 3,
+      "layer": 2
+    },
+    {
+      "type": "book_blue",
+      "col": 2,
+      "row": 3,
+      "layer": 2
+    },
+    {
+      "type": "book_green",
+      "col": 3,
+      "row": 3,
+      "layer": 2
+    },
+    {
+      "type": "rabbit",
+      "col": 0,
+      "row": 4,
+      "layer": 2
+    },
+    {
+      "type": "book_green",
+      "col": 4,
+      "row": 4,
+      "layer": 2
+    }
+  ]
+}

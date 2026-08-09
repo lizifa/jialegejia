@@ -1,0 +1,76 @@
+{
+  "items": [
+    {
+      "id": "book_red",
+      "name": "红皮书",
+      "color": "#E85D5D",
+      "icon": "书"
+    },
+    {
+      "id": "book_blue",
+      "name": "蓝皮书",
+      "color": "#5B8CDE",
+      "icon": "书"
+    },
+    {
+      "id": "book_green",
+      "name": "绿皮书",
+      "color": "#6BBF7A",
+      "icon": "书"
+    },
+    {
+      "id": "book_yellow",
+      "name": "黄皮书",
+      "color": "#F0C35A",
+      "icon": "书"
+    },
+    {
+      "id": "book_orange",
+      "name": "橙皮书",
+      "color": "#F09A4A",
+      "icon": "书"
+    },
+    {
+      "id": "bear",
+      "name": "小熊玩偶",
+      "color": "#C4895A",
+      "icon": "熊"
+    },
+    {
+      "id": "rabbit",
+      "name": "小兔玩偶",
+      "color": "#F2E6DE",
+      "icon": "兔"
+    },
+    {
+      "id": "cat",
+      "name": "小猫玩偶",
+      "color": "#A8A8B0",
+      "icon": "猫"
+    },
+    {
+      "id": "cup",
+      "name": "暖心茶杯",
+      "color": "#F5D76E",
+      "icon": "杯"
+    },
+    {
+      "id": "box",
+      "name": "收纳纸盒",
+      "color": "#D4B896",
+      "icon": "盒"
+    },
+    {
+      "id": "gift",
+      "name": "惊喜盲盒",
+      "color": "#FF9A52",
+      "icon": "礼"
+    },
+    {
+      "id": "basket",
+      "name": "彩球篮",
+      "color": "#E8A0B0",
+      "icon": "篮"
+    }
+  ]
+}

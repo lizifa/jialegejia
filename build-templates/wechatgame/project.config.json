@@ -1,0 +1,74 @@
+{
+    "description": "项目配置文件。",
+    "miniprogramRoot": "./",
+    "setting": {
+        "urlCheck": false,
+        "postcss": true,
+        "minified": true,
+        "newFeature": false,
+        "enhance": false,
+        "useIsolateContext": true,
+        "es6": false,
+        "compileWorklet": false,
+        "uglifyFileName": false,
+        "uploadWithSourceMap": true,
+        "packNpmManually": false,
+        "packNpmRelationList": [],
+        "minifyWXSS": true,
+        "minifyWXML": true,
+        "localPlugins": false,
+        "disableUseStrict": false,
+        "useCompilerPlugins": false,
+        "condition": false,
+        "swc": false,
+        "disableSWC": true,
+        "babelSetting": {
+            "ignore": [],
+            "disablePlugins": [],
+            "outputPath": ""
+        }
+    },
+    "compileType": "game",
+    "libVersion": "widelyUsed",
+    "appid": "wx4e69dbb851fa7098",
+    "projectname": "",
+    "condition": {
+        "search": {
+            "current": -1,
+            "list": []
+        },
+        "conversation": {
+            "current": -1,
+            "list": []
+        },
+        "game": {
+            "currentL": -1,
+            "list": [],
+            "current": -1
+        },
+        "miniprogram": {
+            "current": -1,
+            "list": []
+        }
+    },
+    "simulatorPluginLibVersion": {},
+    "packOptions": {
+        "ignore": [
+            {
+                "type": "regexp",
+                "value": "(^|/)\\._"
+            },
+            {
+                "type": "file",
+                "value": ".DS_Store"
+            },
+            {
+                "type": "suffix",
+                "value": ".ejs"
+            }
+        ],
+        "include": []
+    },
+    "isGameTourist": false,
+    "editorSetting": {}
+}
