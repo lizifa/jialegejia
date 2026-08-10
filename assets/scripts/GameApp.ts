@@ -24,6 +24,7 @@ import {
 } from 'cc';
 import {
     Anim,
+    Brand,
     Colors,
     Design,
     PlayMode,
@@ -198,8 +199,8 @@ export class GameApp extends Component {
         this.bootDone = false;
         const p = this.pageRoot;
 
-        addLabel(p, 'title', '架了个架', 64, Colors.brown, 600, 80, true).node.setPosition(0, 420, 0);
-        addLabel(p, 'sub', '书架盲盒馆', 36, Colors.brown, 500, 50, true).node.setPosition(0, 350, 0);
+        addLabel(p, 'title', Brand.name, 64, Colors.brown, 600, 80, true).node.setPosition(0, 420, 0);
+        addLabel(p, 'sub', Brand.tagline, 36, Colors.brown, 500, 50, true).node.setPosition(0, 350, 0);
         addLabel(p, 'slogan', '翻开盲盒，点亮诗文', 24, Colors.text, 500, 40).node.setPosition(0, 300, 0);
 
         this.drawDecorShelf(p, 0, 40);
@@ -779,7 +780,7 @@ export class GameApp extends Component {
         const ink = '#2F2118';
         const lacquer = '#C45C3A';
 
-        const brandLab = addLabel(p, 'brand', '架了个架', 52, ink, 640, brandH, true);
+        const brandLab = addLabel(p, 'brand', Brand.name, 52, ink, 640, brandH, true);
         brandLab.spacingX = 8;
         const brand = brandLab.node;
         brand.setPosition(0, brandY, 0);
@@ -815,7 +816,7 @@ export class GameApp extends Component {
         rg.circle(0, 0, 3.5);
         rg.fill();
 
-        const tagLab = addLabel(p, 'tag', '书架盲盒馆', 20, lacquer, 400, tagH, true);
+        const tagLab = addLabel(p, 'tag', Brand.tagline, 20, lacquer, 400, tagH, true);
         tagLab.spacingX = 5;
         tagLab.node.setPosition(0, tagY, 0);
 
@@ -832,7 +833,7 @@ export class GameApp extends Component {
         addLabel(
             hookChip,
             'hook',
-            '两种玩法 · 三消消消 · 古诗点亮',
+            Brand.hook,
             16,
             '#8A7460',
             480,
@@ -847,16 +848,16 @@ export class GameApp extends Component {
 
         const poemBtn = this.drawHomePrimaryCta(
             p,
-            '古诗',
-            `按诗句点亮　·　第 ${lv} 关「${verse.title}」`,
+            Brand.modePoem,
+            Brand.modePoemSub(lv, verse.title),
             () => this.startPlayMode('poem', lv),
         );
         poemBtn.setPosition(0, primaryY, 0);
 
         const matchBtn = this.drawHomeModeCard(
             p,
-            '三消',
-            '相同盲盒进匣，凑齐三个消除',
+            Brand.modeMatch3,
+            Brand.modeMatch3Sub,
             '#E07058',
             () => this.startPlayMode('match3', lv),
         );
@@ -864,8 +865,8 @@ export class GameApp extends Component {
 
         const dailyBtn = this.drawHomeModeCard(
             p,
-            '今日一句',
-            `今日「${dailyVerse.title}」· 古诗短关`,
+            Brand.modeDaily,
+            Brand.modeDailySub(dailyVerse.title),
             '#6FBE88',
             () => this.startPlayMode('daily', dailyId),
         );
@@ -875,26 +876,26 @@ export class GameApp extends Component {
             p,
             [
                 {
-                    name: '盲翻',
+                    name: Brand.linkBlind,
                     fn: () => {
                         if (!blindOk) {
-                            this.tip('先通关第 3 关，再来挑战盲翻');
+                            this.tip('先通关第 3 关，再来挑战盲翻诗');
                             return;
                         }
                         this.startPlayMode('blind', lv);
                     },
                 },
-                { name: '选关', fn: () => this.showLevelPickPopup() },
-                { name: '图鉴', fn: () => this.showCatalog() },
-                { name: '文藏', fn: () => this.showLibrary('poem') },
-                { name: '玩法', fn: () => this.showHowTo() },
-                { name: '设置', fn: () => this.showSettings() },
+                { name: Brand.linkLevels, fn: () => this.showLevelPickPopup() },
+                { name: Brand.linkCatalog, fn: () => this.showCatalog() },
+                { name: Brand.linkLibrary, fn: () => this.showLibrary('poem') },
+                { name: Brand.linkHowTo, fn: () => this.showHowTo() },
+                { name: Brand.linkSettings, fn: () => this.showSettings() },
             ],
             102,
         );
         links.setPosition(0, linksY, 0);
 
-        const foot = addLabel(p, 'foot', 'v1.0.0　·　无账号 · 无存档', 14, '#B8A090', 560, footH, true);
+        const foot = addLabel(p, 'foot', Brand.foot, 14, '#B8A090', 560, footH, true);
         foot.node.setPosition(0, footY, 0);
         foot.node.addComponent(BlockInputEvents);
         foot.node.on(Node.EventType.TOUCH_END, () => this.showLegalPopup());
@@ -921,10 +922,10 @@ export class GameApp extends Component {
     private startPlayMode(mode: PlayMode, levelId: number) {
         this.playMode = mode;
         this.leisureMode = mode !== 'poem';
-        if (mode === 'match3') this.tip('三消 · 凑齐三个相同盲盒');
-        else if (mode === 'daily') this.tip(`今日一句 · ${getVerseForLevel(levelId).title}`);
-        else if (mode === 'blind') this.tip('盲翻局 · 场上不露字');
-        else this.tip(`古诗 · ${getVerseForLevel(levelId).title}`);
+        if (mode === 'match3') this.tip(`${Brand.modeMatch3} · 凑齐三个相同盲盒`);
+        else if (mode === 'daily') this.tip(`${Brand.modeDaily} · ${getVerseForLevel(levelId).title}`);
+        else if (mode === 'blind') this.tip(`${Brand.linkBlind} · 场上不露字`);
+        else this.tip(`${Brand.modePoem} · ${getVerseForLevel(levelId).title}`);
         this.enterGame(levelId, mode);
         if (mode === 'daily' || mode === 'match3') {
             this.game.freePropsLeft += 1;
@@ -1242,7 +1243,7 @@ export class GameApp extends Component {
         const p = this.pageRoot;
         const list = versesByKind(tab);
 
-        const safe = this.placePageHeader(p, '文藏馆', () => this.showHome());
+        const safe = this.placePageHeader(p, '诗藏馆', () => this.showHome());
         addLabel(p, 'prog', `${list.length} 篇`, 20, Colors.highlight, 200, 36, true).node.setPosition(
             270,
             safe.headerY,
@@ -1367,7 +1368,7 @@ export class GameApp extends Component {
         this.page = 'about';
         const p = this.pageRoot;
         const safe = this.placePageHeader(p, '关于游戏', () => this.showSettings());
-        addLabel(p, 'name', '架了个架-书架盲盒馆 v1.0.0', 28, Colors.title, 600, 50, true).node.setPosition(0, 200, 0);
+        addLabel(p, 'name', `${Brand.full} ${Brand.version}`, 28, Colors.title, 600, 50, true).node.setPosition(0, 200, 0);
         addLabel(
             p,
             'desc',
@@ -1406,16 +1407,16 @@ export class GameApp extends Component {
 
         const sections: { title: string; body: string }[] = [
             {
-                title: '两种形式',
-                body: '三消：点顶层盲盒进匣，相同类型凑齐三个自动消除，清空通关。古诗：按诗句顺序点亮汉字，点错进匣，匣内可再点亮下一字。',
+                title: '两种玩法',
+                body: `${Brand.modeMatch3}：点顶层盲盒进匣，相同类型凑齐三个自动消除，清空通关。${Brand.modePoem}：按诗句顺序点亮汉字，点错进匣，匣内可再点亮下一字。`,
             },
             {
-                title: '古诗变体',
-                body: '今日一句：每天一首短诗。盲翻局：场上不露字（通关第 3 关解锁）。均不推进主线。',
+                title: '诗句变体',
+                body: `${Brand.modeDaily}：每天一首短诗。${Brand.linkBlind}：场上不露字（通关第 3 关解锁）。均不推进主线。`,
             },
             {
                 title: '散页匣',
-                body: '匣格有限。三消靠自动消除腾空；古诗匣满且点不亮下一字时失败。',
+                body: `匣格有限。${Brand.modeMatch3}靠自动消除腾空；${Brand.modePoem}匣满且点不亮下一字时失败。`,
             },
             {
                 title: '道具',
@@ -1557,13 +1558,13 @@ export class GameApp extends Component {
         const next = this.game.currentTarget();
         const glyphMode = resolveBoardGlyphMode(this.playMode, data.id);
         if (this.playMode === 'match3') {
-            this.tip('点顶层盲盒进匣 · 三个相同即可消除');
+            this.tip(`点顶层盲盒进匣 · 三个相同即可消除`);
         } else if (next) {
             this.tip(
                 this.playMode === 'daily'
-                    ? `今日一句「${verse.title}」· 下一字「${next}」`
+                    ? `${Brand.modeDaily}「${verse.title}」· 下一字「${next}」`
                     : glyphMode === 'blind'
-                      ? `盲翻局 · 场上不露字 · 下一字「${next}」`
+                      ? `${Brand.linkBlind} · 场上不露字 · 下一字「${next}」`
                       : `点带字的顶层盒 · 下一字「${next}」`,
             );
         } else {
@@ -1571,12 +1572,12 @@ export class GameApp extends Component {
         }
     }
 
-    /** 三消顶栏说明（占原诗笺位置） */
+    /** 清匣消除顶栏说明（占原诗笺位置） */
     private buildMatch3Hud(cardW: number, centerY: number, cardH: number) {
         const card = addBg(this.hudLayer, 'match3Hud', cardW, Math.max(72, cardH * 0.7), Colors.panel, 14);
         card.setPosition(0, centerY, 0);
         strokeRect(card.getComponent(Graphics)!, cardW, Math.max(72, cardH * 0.7), Colors.boardBorder, 1.5, 14);
-        addLabel(card, 't', '三消模式', 22, Colors.brown, cardW - 40, 32, true).node.setPosition(0, 12, 0);
+        addLabel(card, 't', Brand.modeMatch3, 22, Colors.brown, cardW - 40, 32, true).node.setPosition(0, 12, 0);
         const prog = addLabel(card, 'p', '凑齐三个相同盲盒消除 · 清空即通关', 16, Colors.text, cardW - 48, 28, true);
         prog.node.setPosition(0, -14, 0);
         this.poemHudRoot = card;
@@ -2276,7 +2277,7 @@ export class GameApp extends Component {
     private onTool(key: string) {
         if (this.busy) return;
         if (key === 'share') {
-            this.tip('谢谢分享书架盲盒馆');
+            this.tip(`谢谢分享${Brand.tagline}`);
             return;
         }
         if (key === 'undo') {
@@ -2513,7 +2514,7 @@ export class GameApp extends Component {
             'd',
             this.playMode === 'match3'
                 ? canAd
-                    ? '看一段短视频，清空散页匣\n就能继续三消'
+                    ? `看一段短视频，清空散页匣\n就能继续${Brand.modeMatch3}`
                     : '本局广告已用完\n可以重开本关，或先回首页歇歇'
                 : canAd
                   ? '看一段短视频，清空匣内闲字\n就能接着点亮诗文'
@@ -2571,7 +2572,7 @@ export class GameApp extends Component {
                     this.refreshEconomyHud();
                     this.refreshTrayVisuals();
                     this.refreshTileStates();
-                    this.tip(this.playMode === 'match3' ? '匣已清空，继续三消' : '匣已清空，继续点亮');
+                    this.tip(this.playMode === 'match3' ? `匣已清空，继续${Brand.modeMatch3}` : '匣已清空，继续点亮');
                 });
             },
             { textHex: Colors.brown, disabled: !canAd, fontSize: 28 },
@@ -2643,9 +2644,9 @@ export class GameApp extends Component {
         let newItems: string[] = [];
         if (this.leisureMode) {
             SaveData.onLeisureClear(this.currentLevel, stars);
-            if (this.playMode === 'daily') this.tip('今日一句已点亮');
-            else if (this.playMode === 'blind') this.tip('盲翻通关：主线进度不变');
-            else if (this.playMode === 'match3') this.tip('三消通关：主线进度不变');
+            if (this.playMode === 'daily') this.tip(`${Brand.modeDaily}已点亮`);
+            else if (this.playMode === 'blind') this.tip(`${Brand.linkBlind}通关：主线进度不变`);
+            else if (this.playMode === 'match3') this.tip(`${Brand.modeMatch3}通关：主线进度不变`);
             else this.tip('休闲通关：主线进度不变');
             this.leisureMode = false;
         } else {
@@ -2665,7 +2666,7 @@ export class GameApp extends Component {
         const panel = addBg(this.overlayRoot, 'm3win', 600, 420, Colors.panel, 18);
         popupScaleIn(panel);
         strokeRect(panel.getComponent(Graphics)!, 600, 420, Colors.boardBorder, 2, 18);
-        addLabel(panel, 'done', '三消通关', 28, Colors.highlight, 520, 40, true).node.setPosition(0, 140, 0);
+        addLabel(panel, 'done', `${Brand.modeMatch3}通关`, 28, Colors.highlight, 520, 40, true).node.setPosition(0, 140, 0);
         addLabel(panel, 'sub', '相同盲盒凑齐三个，架上已清空', 20, Colors.text, 520, 36, true).node.setPosition(
             0,
             90,
@@ -2832,8 +2833,8 @@ export class GameApp extends Component {
 
         const nextLabel = sideMode
             ? this.playMode === 'daily'
-                ? '再背今日'
-                : '再盲翻一局'
+                ? `再来${Brand.modeDaily}`
+                : `再来${Brand.linkBlind}`
             : hasNext
               ? '下一关'
               : '返回首页';

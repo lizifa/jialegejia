@@ -25,6 +25,28 @@ export const Colors = {
     star: '#FFC94A',
 };
 
+/** 对外品牌与按钮文案（首页 / 关于 / 分享） */
+export const Brand = {
+    name: '诗了个消',
+    tagline: '盲盒诗匣',
+    hook: '两种玩法 · 清匣消除 · 点亮诗句',
+    full: '诗了个消 · 盲盒诗匣',
+    version: 'v1.0.0',
+    modePoem: '点亮诗句',
+    modePoemSub: (lv: number, title: string) => `按诗句点亮　·　第 ${lv} 关「${title}」`,
+    modeMatch3: '清匣消除',
+    modeMatch3Sub: '相同盲盒进匣，凑齐三个消除',
+    modeDaily: '每日一诗',
+    modeDailySub: (title: string) => `今日「${title}」· 短关速背`,
+    linkBlind: '盲翻诗',
+    linkLevels: '选关',
+    linkCatalog: '图鉴',
+    linkLibrary: '诗藏',
+    linkHowTo: '玩法',
+    linkSettings: '设置',
+    foot: 'v1.0.0　·　无账号 · 无存档',
+};
+
 export const Design = {
     width: 720,
     height: 1280,
@@ -129,10 +151,10 @@ export type PlayMode = 'match3' | 'poem' | 'daily' | 'blind';
 export type BoardGlyphMode = 'top' | 'blind' | 'none';
 
 export function playModeTitle(mode: PlayMode): string {
-    if (mode === 'match3') return '三消';
-    if (mode === 'daily') return '今日一句';
-    if (mode === 'blind') return '盲翻局';
-    return '古诗';
+    if (mode === 'match3') return Brand.modeMatch3;
+    if (mode === 'daily') return Brand.modeDaily;
+    if (mode === 'blind') return Brand.linkBlind;
+    return Brand.modePoem;
 }
 
 export function isPoemFamily(mode: PlayMode): boolean {
