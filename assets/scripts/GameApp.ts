@@ -55,14 +55,18 @@ import {
     addButton,
     addCircleBtn,
     addLabel,
+    bindJellyPress,
     colorFromHex,
     drawIsoSlot,
     ensureUI,
     fadeMask,
     fillRect,
+    hopOnce,
     idleBreathe,
+    idleFadePulse,
     idleFloat,
     idleSway,
+    jellyBounce,
     makeNode,
     makeVerticalScroll,
     mountEmbeddedBoardGlyph,
@@ -72,6 +76,9 @@ import {
     popupScaleIn,
     popupSlideUp,
     setOpacity,
+    slideInX,
+    slideUpIn,
+    sparkBurst,
     strokeRect,
 } from './ui/UIKit';
 import { TileItem } from './ui/TileItem';
@@ -293,7 +300,7 @@ export class GameApp extends Component {
         return root;
     }
 
-    /** 首页点缀：漂浮小星点 */
+    /** 首页点缀：漂浮小星点（可点爆） */
     private drawHomeSparkles(parent: Node, y: number) {
         const root = makeNode('sparkles', parent, 640, 80);
         root.setPosition(0, y, 0);
@@ -302,9 +309,11 @@ export class GameApp extends Component {
             { x: 250, y: -6, r: 3 },
             { x: -200, y: -18, r: 2.5 },
             { x: 210, y: 16, r: 3.5 },
+            { x: -120, y: 8, r: 2 },
+            { x: 130, y: -12, r: 2.5 },
         ];
         spots.forEach((s, i) => {
-            const n = makeNode(`sp${i}`, root, 16, 16);
+            const n = makeNode(`sp${i}`, root, 20, 20);
             n.setPosition(s.x, s.y, 0);
             const g = n.addComponent(Graphics);
             g.fillColor = colorFromHex('#E8A878', 180);
@@ -313,9 +322,15 @@ export class GameApp extends Component {
             g.fillColor = colorFromHex('#FFF6EE', 200);
             g.circle(-s.r * 0.25, s.r * 0.25, s.r * 0.35);
             g.fill();
-            idleFloat(n, 4 + (i % 2), 1.4 + i * 0.15, i * 0.12);
+            idleFloat(n, 4 + (i % 2), 1.4 + i * 0.12, i * 0.1);
+            idleFadePulse(n, 140, 255, 1.0 + i * 0.08, i * 0.15);
+            n.addComponent(BlockInputEvents);
+            n.on(Node.EventType.TOUCH_END, (e: EventTouch) => {
+                e.propagationStopped = true;
+                sparkBurst(root, n.position.x, n.position.y, 8, '#E8A878');
+                hopOnce(n, 10);
+            });
         });
-        this.disableHit(root);
         return root;
     }
 
@@ -373,74 +388,107 @@ export class GameApp extends Component {
     }
 
     /**
-     * 首页主视觉：圆角木匣 + 彩色盲盒 + 探头猫 + 礼盒
+     * 首页主视觉：木匣展台 + 可点跳动的彩色盲盒 + 礼盒
      */
-    private drawHomeHero(parent: Node, y: number, height = 300): { root: Node; height: number } {
+    private drawHomeHero(parent: Node, y: number, height = 300): { root: Node; height: number; boxes: Node[] } {
         const h = height;
         const hero = makeNode('hero', parent, 680, h);
         hero.setPosition(0, y, 0);
         const g = hero.addComponent(Graphics);
-        const sy = h / 300;
+        const sy = h / 280;
 
         // 展台软影 + 圆润底座
         g.fillColor = colorFromHex('#C9A882', 70);
-        g.ellipse(0, -128 * sy, 250 * sy, 22 * sy);
+        g.ellipse(0, -118 * sy, 240 * sy, 20 * sy);
         g.fill();
         g.fillColor = colorFromHex('#E8C9A0');
-        g.roundRect(-250 * sy, -126 * sy, 500 * sy, 28 * sy, 16);
+        g.roundRect(-240 * sy, -116 * sy, 480 * sy, 26 * sy, 14);
         g.fill();
         g.fillColor = colorFromHex('#A67C52');
-        g.roundRect(-236 * sy, -118 * sy, 472 * sy, 10 * sy, 5);
+        g.roundRect(-226 * sy, -108 * sy, 452 * sy, 9 * sy, 4);
         g.fill();
 
-        // 书柜：更大圆角 + 内衬暖光
+        // 书柜
         g.fillColor = colorFromHex('#E8D2B4');
-        g.roundRect(-200 * sy, -98 * sy, 320 * sy, 220 * sy, 22);
+        g.roundRect(-190 * sy, -92 * sy, 300 * sy, 200 * sy, 20);
         g.fill();
         g.fillColor = colorFromHex('#FFF6EA');
-        g.roundRect(-186 * sy, -84 * sy, 292 * sy, 192 * sy, 16);
+        g.roundRect(-176 * sy, -78 * sy, 272 * sy, 172 * sy, 14);
         g.fill();
         g.strokeColor = colorFromHex('#C4A36A', 160);
         g.lineWidth = 2.2;
-        g.roundRect(-200 * sy, -98 * sy, 320 * sy, 220 * sy, 22);
+        g.roundRect(-190 * sy, -92 * sy, 300 * sy, 200 * sy, 20);
         g.stroke();
-        // 层板
         g.fillColor = colorFromHex('#D4B48A');
-        g.roundRect(-172 * sy, 8 * sy, 264 * sy, 8 * sy, 4);
-        g.fill();
-        g.fillColor = colorFromHex('#F0E0C0', 160);
-        g.roundRect(-172 * sy, 13 * sy, 264 * sy, 2 * sy, 1);
+        g.roundRect(-162 * sy, 4 * sy, 244 * sy, 7 * sy, 3);
         g.fill();
 
-        // 略提饱和，更活泼
-        const topRow: { x: number; y: number; s: number; top: string; side: string }[] = [
-            { x: -118, y: 58, s: 50, top: '#6B94D4', side: '#4A6FA8' },
-            { x: -62, y: 62, s: 52, top: '#6FBE88', side: '#4A9660' },
-            { x: -4, y: 56, s: 54, top: '#E09858', side: '#B87038' },
-            { x: 54, y: 60, s: 50, top: '#E07060', side: '#B04A40' },
-            { x: 108, y: 57, s: 48, top: '#E0C068', side: '#B89840' },
+        const specs: { x: number; y: number; s: number; top: string; side: string }[] = [
+            { x: -108, y: 52, s: 46, top: '#6B94D4', side: '#4A6FA8' },
+            { x: -54, y: 56, s: 48, top: '#6FBE88', side: '#4A9660' },
+            { x: 0, y: 50, s: 50, top: '#E09858', side: '#B87038' },
+            { x: 54, y: 54, s: 46, top: '#E07060', side: '#B04A40' },
+            { x: 100, y: 50, s: 44, top: '#E0C068', side: '#B89840' },
+            { x: -82, y: -4, s: 52, top: '#78BCC8', side: '#508898' },
+            { x: -22, y: 2, s: 56, top: '#E8A8B4', side: '#C07888' },
+            { x: 40, y: -2, s: 54, top: '#E0C888', side: '#B8A058' },
+            { x: 92, y: 2, s: 50, top: '#78B888', side: '#509868' },
+            { x: -52, y: -54, s: 58, top: '#E07060', side: '#A84840' },
+            { x: 10, y: -48, s: 66, top: '#F0B878', side: '#C89050' },
+            { x: 72, y: -56, s: 56, top: '#A090C8', side: '#7870A0' },
         ];
-        const midRow: { x: number; y: number; s: number; top: string; side: string }[] = [
-            { x: -90, y: -2, s: 56, top: '#78BCC8', side: '#508898' },
-            { x: -28, y: 6, s: 60, top: '#E8A8B4', side: '#C07888' },
-            { x: 36, y: 0, s: 58, top: '#E0C888', side: '#B8A058' },
-            { x: 96, y: 4, s: 54, top: '#78B888', side: '#509868' },
-        ];
-        const frontRow: { x: number; y: number; s: number; top: string; side: string }[] = [
-            { x: -58, y: -58, s: 62, top: '#E07060', side: '#A84840' },
-            { x: 6, y: -50, s: 70, top: '#F0B878', side: '#C89050' },
-            { x: 70, y: -60, s: 60, top: '#A090C8', side: '#7870A0' },
-        ];
-        [...topRow, ...midRow, ...frontRow].forEach((b) =>
-            this.paintMiniIsoBox(g, b.x * sy, b.y * sy, b.s * sy, b.top, b.side),
-        );
 
-        const gift = this.drawDecorGift(hero, 198 * sy, 18 * sy);
-        gift.setScale(1.15 * sy, 1.15 * sy, 1);
-        idleSway(gift, 4, 1.6, 0.2);
-        idleFloat(gift, 7, 1.9, 0.1);
+        const boxes: Node[] = [];
+        specs.forEach((b, i) => {
+            const box = makeNode(`box${i}`, hero, b.s * sy * 1.2, b.s * sy * 1.2);
+            box.setPosition(b.x * sy, b.y * sy, 0);
+            const bg = box.addComponent(Graphics);
+            this.paintMiniIsoBox(bg, 0, 0, b.s * sy, b.top, b.side);
+            box.addComponent(BlockInputEvents);
+            box.on(Node.EventType.TOUCH_END, (e: EventTouch) => {
+                e.propagationStopped = true;
+                hopOnce(box, 14 + (i % 3) * 4);
+                sparkBurst(hero, box.position.x, box.position.y + 10, 6, b.top);
+                this.scheduleOnce(() => {
+                    if (box.isValid) idleFloat(box, 3 + (i % 2), 1.7 + (i % 4) * 0.1, 0);
+                }, 0.42);
+            });
+            // 错落入场 + 轻浮
+            const op = box.addComponent(UIOpacity);
+            op.opacity = 0;
+            box.setScale(0.3, 0.3, 1);
+            tween(op)
+                .delay(0.14 + i * 0.035)
+                .to(0.2, { opacity: 255 })
+                .start();
+            tween(box)
+                .delay(0.14 + i * 0.035)
+                .to(0.36, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' })
+                .call(() => idleFloat(box, 3 + (i % 2), 1.7 + (i % 4) * 0.1, 0.05 * i))
+                .start();
+            boxes.push(box);
+        });
 
-        return { root: hero, height: h };
+        const gift = this.drawDecorGift(hero, 188 * sy, 14 * sy);
+        gift.setScale(1.1 * sy, 1.1 * sy, 1);
+        gift.addComponent(BlockInputEvents);
+        gift.on(Node.EventType.TOUCH_END, (e: EventTouch) => {
+            e.propagationStopped = true;
+            jellyBounce(gift);
+            sparkBurst(hero, gift.position.x, gift.position.y, 10, '#FF9A6A');
+            this.tip('惊喜盲盒 · 通关解锁更多');
+        });
+        idleSway(gift, 5, 1.5, 0.4);
+        idleFloat(gift, 8, 1.8, 0.3);
+
+        // 点展台空白进图鉴
+        hero.addComponent(BlockInputEvents);
+        hero.on(Node.EventType.TOUCH_END, () => {
+            sparkBurst(hero, 0, -40 * sy, 7, '#E8C9A0');
+            this.showCatalog();
+        });
+
+        return { root: hero, height: h, boxes };
     }
 
     private drawDecorShelf(parent: Node, x: number, y: number): Node {
@@ -718,40 +766,38 @@ export class GameApp extends Component {
         const visH = safe.visH;
         this.drawHomeAtmosphere(p, visH);
 
-        const brandH = 52;
-        const tagH = 22;
-        const hookH = 32;
-        const primaryH = 96;
-        const modeH = 64;
-        const linksH = 40;
-        const footH = 22;
-        const gapBrandTag = 6;
-        const gapTagHook = 4;
-        const gapHookHero = 20;
-        const gapHeroModes = 22;
-        const gapPrimaryMode = 12;
-        const gapModeMode = 10;
-        const gapModesLinks = 22;
-        const gapLinksFoot = 10;
-        const heroH = Math.min(220, Math.max(160, visH * 0.2));
-        const modesH = primaryH + gapPrimaryMode + modeH + gapModeMode + modeH;
+        // 紧凑一屏：品牌 → 主视觉 → 主 CTA → 双列次级 → 底链
+        const brandH = 48;
+        const tagH = 20;
+        const primaryH = 88;
+        const modeH = 72;
+        const linksH = 44;
+        const footH = 20;
+        const gapBrandTag = 4;
+        const gapTagHero = 14;
+        const gapHeroModes = 16;
+        const gapPrimaryDual = 12;
+        const gapModesLinks = 16;
+        const gapLinksFoot = 8;
+        const heroH = Math.min(240, Math.max(168, visH * 0.24));
+        const dualH = modeH;
         const totalH =
             brandH +
             gapBrandTag +
             tagH +
-            gapTagHook +
-            hookH +
-            gapHookHero +
+            gapTagHero +
             heroH +
             gapHeroModes +
-            modesH +
+            primaryH +
+            gapPrimaryDual +
+            dualH +
             gapModesLinks +
             linksH +
             gapLinksFoot +
             footH;
 
-        const safeTop = safe.contentTop - 8;
-        const safeBot = safe.contentBottom + 8;
+        const safeTop = safe.contentTop - 6;
+        const safeBot = safe.contentBottom + 6;
         let shiftY = 0;
         const topEdge = totalH * 0.5;
         const botEdge = -totalH * 0.5;
@@ -762,17 +808,13 @@ export class GameApp extends Component {
         const brandY = cursor - brandH * 0.5;
         cursor -= brandH + gapBrandTag;
         const tagY = cursor - tagH * 0.5;
-        cursor -= tagH + gapTagHook;
-        const hookY = cursor - hookH * 0.5;
-        cursor -= hookH + gapHookHero;
+        cursor -= tagH + gapTagHero;
         const heroY = cursor - heroH * 0.5;
         cursor -= heroH + gapHeroModes;
         const primaryY = cursor - primaryH * 0.5;
-        cursor -= primaryH + gapPrimaryMode;
-        const dailyY = cursor - modeH * 0.5;
-        cursor -= modeH + gapModeMode;
-        const blindY = cursor - modeH * 0.5;
-        cursor -= modeH + gapModesLinks;
+        cursor -= primaryH + gapPrimaryDual;
+        const dualY = cursor - dualH * 0.5;
+        cursor -= dualH + gapModesLinks;
         const linksY = cursor - linksH * 0.5;
         cursor -= linksH + gapLinksFoot;
         const footY = cursor - footH * 0.5;
@@ -780,71 +822,50 @@ export class GameApp extends Component {
         const ink = '#2F2118';
         const lacquer = '#C45C3A';
 
-        const brandLab = addLabel(p, 'brand', Brand.name, 52, ink, 640, brandH, true);
-        brandLab.spacingX = 8;
+        const brandLab = addLabel(p, 'brand', Brand.name, 50, ink, 640, brandH, true);
+        brandLab.spacingX = 10;
         const brand = brandLab.node;
         brand.setPosition(0, brandY, 0);
+        brand.addComponent(BlockInputEvents);
+        brand.on(Node.EventType.TOUCH_END, () => {
+            jellyBounce(brand);
+            sparkBurst(p, 0, brandY, 10, '#E07858');
+        });
 
         const decoL = makeNode('decoL', p, 24, 36);
-        decoL.setPosition(-168, brandY + 4, 0);
+        decoL.setPosition(-155, brandY + 2, 0);
         const dlg = decoL.addComponent(Graphics);
         dlg.fillColor = colorFromHex('#E07858');
-        dlg.roundRect(-6, -14, 12, 28, 3);
+        dlg.roundRect(-5, -12, 10, 24, 3);
         dlg.fill();
         dlg.fillColor = colorFromHex('#E8C98A');
-        dlg.circle(0, 10, 3);
+        dlg.circle(0, 9, 2.5);
         dlg.fill();
         const decoR = makeNode('decoR', p, 24, 36);
-        decoR.setPosition(168, brandY + 4, 0);
+        decoR.setPosition(155, brandY + 2, 0);
         const drg = decoR.addComponent(Graphics);
         drg.fillColor = colorFromHex('#6FBE88');
-        drg.roundRect(-6, -14, 12, 28, 3);
+        drg.roundRect(-5, -12, 10, 24, 3);
         drg.fill();
         drg.fillColor = colorFromHex('#E8C98A');
-        drg.circle(0, 10, 3);
+        drg.circle(0, 9, 2.5);
         drg.fill();
 
-        const rule = makeNode('rule', p, 200, 12);
-        rule.setPosition(0, brandY - brandH * 0.5 - 2, 0);
-        const rg = rule.addComponent(Graphics);
-        rg.strokeColor = colorFromHex('#E8C98A', 180);
-        rg.lineWidth = 2;
-        rg.moveTo(-80, 0);
-        rg.lineTo(80, 0);
-        rg.stroke();
-        rg.fillColor = colorFromHex('#E07858', 200);
-        rg.circle(0, 0, 3.5);
-        rg.fill();
-
-        const tagLab = addLabel(p, 'tag', Brand.tagline, 20, lacquer, 400, tagH, true);
-        tagLab.spacingX = 5;
+        const tagLab = addLabel(
+            p,
+            'tag',
+            `${Brand.tagline}　·　两种玩法`,
+            17,
+            lacquer,
+            560,
+            tagH,
+            true,
+        );
+        tagLab.spacingX = 3;
         tagLab.node.setPosition(0, tagY, 0);
 
-        const hookChip = makeNode('hookChip', p, 560, 34);
-        hookChip.setPosition(0, hookY, 0);
-        const hcg = hookChip.addComponent(Graphics);
-        hcg.fillColor = colorFromHex('#FFF8F0', 220);
-        hcg.roundRect(-250, -15, 500, 30, 15);
-        hcg.fill();
-        hcg.strokeColor = colorFromHex('#E8C9A0', 160);
-        hcg.lineWidth = 1.5;
-        hcg.roundRect(-250, -15, 500, 30, 15);
-        hcg.stroke();
-        addLabel(
-            hookChip,
-            'hook',
-            Brand.hook,
-            16,
-            '#8A7460',
-            480,
-            hookH,
-            true,
-        ).node.setPosition(0, 0, 0);
-
-        this.drawHomeSparkles(p, heroY + heroH * 0.42);
+        this.drawHomeSparkles(p, heroY + heroH * 0.4);
         const { root: hero } = this.drawHomeHero(p, heroY, heroH);
-        hero.addComponent(BlockInputEvents);
-        hero.on(Node.EventType.TOUCH_END, () => this.showCatalog());
 
         const poemBtn = this.drawHomePrimaryCta(
             p,
@@ -854,23 +875,28 @@ export class GameApp extends Component {
         );
         poemBtn.setPosition(0, primaryY, 0);
 
+        const dual = makeNode('dualModes', p, 560, dualH);
+        dual.setPosition(0, dualY, 0);
         const matchBtn = this.drawHomeModeCard(
-            p,
+            dual,
             Brand.modeMatch3,
             Brand.modeMatch3Sub,
             '#E07058',
             () => this.startPlayMode('match3', lv),
+            268,
+            modeH,
         );
-        matchBtn.setPosition(0, dailyY, 0);
-
+        matchBtn.setPosition(-142, 0, 0);
         const dailyBtn = this.drawHomeModeCard(
-            p,
+            dual,
             Brand.modeDaily,
             Brand.modeDailySub(dailyVerse.title),
             '#6FBE88',
             () => this.startPlayMode('daily', dailyId),
+            268,
+            modeH,
         );
-        dailyBtn.setPosition(0, blindY, 0);
+        dailyBtn.setPosition(142, 0, 0);
 
         const links = this.drawHomeTextLinks(
             p,
@@ -891,32 +917,33 @@ export class GameApp extends Component {
                 { name: Brand.linkHowTo, fn: () => this.showHowTo() },
                 { name: Brand.linkSettings, fn: () => this.showSettings() },
             ],
-            102,
+            100,
         );
         links.setPosition(0, linksY, 0);
 
-        const foot = addLabel(p, 'foot', Brand.foot, 14, '#B8A090', 560, footH, true);
+        const foot = addLabel(p, 'foot', Brand.foot, 13, '#B8A090', 560, footH, true);
         foot.node.setPosition(0, footY, 0);
         foot.node.addComponent(BlockInputEvents);
         foot.node.on(Node.EventType.TOUCH_END, () => this.showLegalPopup());
 
-        popIn(brand, 0.02, 0.88);
-        popIn(decoL, 0.04, 0.5);
-        popIn(decoR, 0.05, 0.5);
-        popIn(rule, 0.06, 0.5);
-        popIn(tagLab.node, 0.08, 0.92);
-        popIn(hookChip, 0.1, 0.9);
-        popIn(hero, 0.12, 0.86);
-        popIn(poemBtn, 0.18, 0.78);
-        popIn(matchBtn, 0.22, 0.82);
-        popIn(dailyBtn, 0.26, 0.82);
-        popIn(links, 0.3, 0.92);
+        slideUpIn(brand, 0.02, 28);
+        slideInX(decoL, 0.06, -40);
+        slideInX(decoR, 0.06, 40);
+        slideUpIn(tagLab.node, 0.1, 16);
+        popIn(hero, 0.12, 0.82);
+        slideUpIn(poemBtn, 0.22, 48);
+        slideInX(matchBtn, 0.3, -56);
+        slideInX(dailyBtn, 0.32, 56);
+        slideUpIn(links, 0.38, 24);
+        slideUpIn(foot.node, 0.42, 12);
 
-        idleFloat(hero, 4, 2.6, 0.3);
-        idleFloat(decoL, 3, 1.8, 0.2);
-        idleFloat(decoR, 3, 2.0, 0.35);
-        idleBreathe(poemBtn, 0.018, 1.5, 0.5);
-        idleSway(hookChip, 1.2, 2.2, 0.8);
+        idleFloat(decoL, 4, 1.9, 0.4);
+        idleFloat(decoR, 4, 2.1, 0.55);
+        idleSway(decoL, 3, 2.4, 0.5);
+        idleSway(decoR, -3, 2.6, 0.6);
+        idleBreathe(poemBtn, 0.022, 1.35, 0.7);
+        const glow = poemBtn.getChildByName('glow');
+        if (glow) idleFadePulse(glow, 70, 180, 1.15, 0.8);
     }
 
     private startPlayMode(mode: PlayMode, levelId: number) {
@@ -933,90 +960,73 @@ export class GameApp extends Component {
         }
     }
 
-    /** 首页次级模式卡片 */
+    /** 首页次级模式卡片（支持自定义宽高，双列用） */
     private drawHomeModeCard(
         parent: Node,
         title: string,
         sub: string,
         accent: string,
         onClick: () => void,
+        w = 520,
+        h = 64,
     ): Node {
-        const w = 520;
-        const h = 64;
         const node = makeNode(`mode_${title}`, parent, w, h);
         const g = node.addComponent(Graphics);
-        g.fillColor = colorFromHex('#FFF8F0', 240);
+        g.fillColor = colorFromHex('#FFF8F0', 245);
         g.roundRect(-w * 0.5, -h * 0.5, w, h, 18);
         g.fill();
-        g.strokeColor = colorFromHex(accent, 200);
+        g.strokeColor = colorFromHex(accent, 210);
         g.lineWidth = 2;
         g.roundRect(-w * 0.5, -h * 0.5, w, h, 18);
         g.stroke();
         g.fillColor = colorFromHex(accent);
-        g.roundRect(-w * 0.5 + 10, -10, 6, 20, 3);
+        g.roundRect(-w * 0.5 + 8, -h * 0.22, 5, h * 0.44, 2.5);
         g.fill();
-        addLabel(node, 't', title, 26, Colors.brown, w - 48, 32, true).node.setPosition(0, 8, 0);
-        addLabel(node, 's', sub, 15, Colors.text, w - 48, 24, false).node.setPosition(0, -14, 0);
-        node.addComponent(BlockInputEvents);
-        node.on(Node.EventType.TOUCH_START, () => {
-            tween(node).to(Anim.btnMs, { scale: new Vec3(0.97, 0.97, 1) }, { easing: 'quadOut' }).start();
-        });
-        node.on(Node.EventType.TOUCH_CANCEL, () => {
-            tween(node).to(Anim.btnMs, { scale: new Vec3(1, 1, 1) }).start();
-        });
-        node.on(Node.EventType.TOUCH_END, () => {
-            tween(node)
-                .to(Anim.btnMs, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' })
-                .call(onClick)
-                .start();
+        addLabel(node, 't', title, w < 300 ? 22 : 26, Colors.brown, w - 36, 28, true).node.setPosition(4, 10, 0);
+        addLabel(node, 's', sub, w < 300 ? 12 : 15, Colors.text, w - 36, 36, false).node.setPosition(4, -14, 0);
+        bindJellyPress(node, () => {
+            sparkBurst(parent, node.position.x, node.position.y, 7, accent);
+            onClick();
         });
         return node;
     }
 
     private drawHomePrimaryCta(parent: Node, title: string, sub: string, onClick: () => void): Node {
-        const w = 520;
-        const h = 96;
+        const w = 540;
+        const h = 88;
         const node = makeNode('start', parent, w, h);
+        const glow = makeNode('glow', node, w + 24, h + 20);
+        const gg = glow.addComponent(Graphics);
+        gg.fillColor = colorFromHex('#E07058', 55);
+        gg.roundRect(-(w + 24) * 0.5, -(h + 20) * 0.5, w + 24, h + 20, 32);
+        gg.fill();
+
         const g = node.addComponent(Graphics);
-        // 软阴影
-        g.fillColor = colorFromHex('#C45C3A', 45);
-        g.roundRect(-w * 0.5 + 6, -h * 0.5 - 6, w - 12, h, 28);
+        g.fillColor = colorFromHex('#C45C3A', 50);
+        g.roundRect(-w * 0.5 + 5, -h * 0.5 - 5, w - 10, h, 26);
         g.fill();
-        // 漆面主体（更圆）
         g.fillColor = colorFromHex('#E07058');
-        g.roundRect(-w * 0.5, -h * 0.5, w, h, 28);
+        g.roundRect(-w * 0.5, -h * 0.5, w, h, 26);
         g.fill();
-        // 上部柔亮
         g.fillColor = colorFromHex('#F09070');
-        g.roundRect(-w * 0.5 + 4, -h * 0.5 + 5, w - 8, h * 0.46, 24);
+        g.roundRect(-w * 0.5 + 4, -h * 0.5 + 4, w - 8, h * 0.44, 22);
         g.fill();
-        // 亮边
-        g.strokeColor = colorFromHex('#FFE0C8', 200);
+        g.strokeColor = colorFromHex('#FFE0C8', 210);
         g.lineWidth = 2;
-        g.roundRect(-w * 0.5 + 3, -h * 0.5 + 3, w - 6, h - 6, 26);
+        g.roundRect(-w * 0.5 + 3, -h * 0.5 + 3, w - 6, h - 6, 24);
         g.stroke();
-        // 两侧小圆点装饰
-        g.fillColor = colorFromHex('#FFE8D0', 200);
-        g.circle(-w * 0.5 + 22, 0, 4);
+        g.fillColor = colorFromHex('#FFE8D0', 210);
+        g.circle(-w * 0.5 + 20, 0, 3.5);
         g.fill();
-        g.circle(w * 0.5 - 22, 0, 4);
+        g.circle(w * 0.5 - 20, 0, 3.5);
         g.fill();
-        const t = addLabel(node, 't', title, 36, '#FFF8F0', w - 24, 42, true);
+        const t = addLabel(node, 't', title, 34, '#FFF8F0', w - 24, 40, true);
         t.spacingX = 6;
-        t.node.setPosition(0, 12, 0);
-        addLabel(node, 's', sub, 18, '#FFE8D8', w - 40, 28, true).node.setPosition(0, -22, 0);
-        node.addComponent(BlockInputEvents);
-        node.on(Node.EventType.TOUCH_START, () => {
-            tween(node).to(Anim.btnMs, { scale: new Vec3(0.96, 0.96, 1) }, { easing: 'quadOut' }).start();
-        });
-        node.on(Node.EventType.TOUCH_CANCEL, () => {
-            tween(node).to(Anim.btnMs, { scale: new Vec3(1, 1, 1) }).start();
-        });
-        node.on(Node.EventType.TOUCH_END, () => {
-            tween(node)
-                .to(Anim.btnMs, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' })
-                .call(onClick)
-                .start();
+        t.node.setPosition(0, 11, 0);
+        addLabel(node, 's', sub, 16, '#FFE8D8', w - 40, 26, true).node.setPosition(0, -20, 0);
+        bindJellyPress(node, () => {
+            sparkBurst(parent, 0, node.position.y, 12, '#FFB090');
+            onClick();
         });
         return node;
     }
@@ -1030,21 +1040,23 @@ export class GameApp extends Component {
         const root = makeNode('links', parent, 680, 48);
         items.forEach((it, i) => {
             const x = (i - (items.length - 1) / 2) * step;
-            const chipW = Math.min(88, step - 10);
-            const chip = makeNode(`chip${i}`, root, chipW, 36);
+            const chipW = Math.min(92, step - 8);
+            const chip = makeNode(`chip${i}`, root, chipW, 38);
             chip.setPosition(x, 0, 0);
             const cg = chip.addComponent(Graphics);
-            cg.fillColor = colorFromHex('#FFF8F0', 230);
-            cg.roundRect(-chipW * 0.5, -16, chipW, 32, 16);
+            cg.fillColor = colorFromHex('#FFF8F0', 235);
+            cg.roundRect(-chipW * 0.5, -17, chipW, 34, 17);
             cg.fill();
-            cg.strokeColor = colorFromHex('#E8C9A0', 140);
+            cg.strokeColor = colorFromHex('#E8C9A0', 150);
             cg.lineWidth = 1.2;
-            cg.roundRect(-chipW * 0.5, -16, chipW, 32, 16);
+            cg.roundRect(-chipW * 0.5, -17, chipW, 34, 17);
             cg.stroke();
-            const lab = addLabel(chip, 't', it.name, 18, '#6B4A30', chipW - 8, 30, true);
-            lab.node.setPosition(0, 0, 0);
-            chip.addComponent(BlockInputEvents);
-            chip.on(Node.EventType.TOUCH_END, () => it.fn());
+            addLabel(chip, 't', it.name, 17, '#6B4A30', chipW - 6, 28, true).node.setPosition(0, 0, 0);
+            bindJellyPress(chip, () => {
+                sparkBurst(root, x, 0, 5, '#E8C9A0');
+                it.fn();
+            });
+            popIn(chip, 0.4 + i * 0.04, 0.6);
         });
         return root;
     }

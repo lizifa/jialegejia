@@ -194,6 +194,10 @@ export const Anim = {
     popupMs: 0.35,
     pageMs: 0.25,
     starGapMs: 0.08,
+    /** 首页入场弹跳 */
+    homePopMs: 0.42,
+    /** 果冻按压缩放 */
+    jellyMs: 0.16,
 };
 
 export interface ItemDef {

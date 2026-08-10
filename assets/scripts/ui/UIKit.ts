@@ -14,6 +14,7 @@ import {
     UITransform,
     Vec3,
     tween,
+    Tween,
     UIRenderer,
 } from 'cc';
 import { Anim, Colors, Design, darken, hexToRgb, lighten } from '../core/Config';
@@ -614,6 +615,19 @@ export function idleBreathe(node: Node, amp = 0.035, duration = 0.9, delay = 0):
         .start();
 }
 
+/** 透明度呼吸（光晕/描边感） */
+export function idleFadePulse(node: Node, lo = 120, hi = 255, duration = 1.1, delay = 0): void {
+    const op = node.getComponent(UIOpacity) || node.addComponent(UIOpacity);
+    op.opacity = lo;
+    tween(op)
+        .delay(delay)
+        .to(duration, { opacity: hi }, { easing: 'sineInOut' })
+        .to(duration, { opacity: lo }, { easing: 'sineInOut' })
+        .union()
+        .repeatForever()
+        .start();
+}
+
 /** 入场：从小到大弹入 */
 export function popIn(node: Node, delay = 0, from = 0.55): void {
     node.setScale(from, from, 1);
@@ -622,7 +636,108 @@ export function popIn(node: Node, delay = 0, from = 0.55): void {
     tween(op).delay(delay).to(0.28, { opacity: 255 }).start();
     tween(node)
         .delay(delay)
-        .to(0.38, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' })
+        .to(Anim.homePopMs, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' })
+        .start();
+}
+
+/** 入场：自下弹入 */
+export function slideUpIn(node: Node, delay = 0, fromY = 36): void {
+    const base = node.position.clone();
+    node.setPosition(base.x, base.y - fromY, 0);
+    const op = node.getComponent(UIOpacity) || node.addComponent(UIOpacity);
+    op.opacity = 0;
+    node.setScale(0.92, 0.92, 1);
+    tween(op).delay(delay).to(0.26, { opacity: 255 }).start();
+    tween(node)
+        .delay(delay)
+        .to(
+            Anim.homePopMs,
+            { position: base, scale: new Vec3(1, 1, 1) },
+            { easing: 'backOut' },
+        )
+        .start();
+}
+
+/** 入场：左右滑入 */
+export function slideInX(node: Node, delay = 0, fromX = -48): void {
+    const base = node.position.clone();
+    node.setPosition(base.x + fromX, base.y, 0);
+    const op = node.getComponent(UIOpacity) || node.addComponent(UIOpacity);
+    op.opacity = 0;
+    tween(op).delay(delay).to(0.24, { opacity: 255 }).start();
+    tween(node)
+        .delay(delay)
+        .to(0.4, { position: base }, { easing: 'backOut' })
+        .start();
+}
+
+/** 单次果冻弹跳（点按反馈） */
+export function jellyBounce(node: Node, onDone?: () => void): void {
+    Tween.stopAllByTarget(node);
+    tween(node)
+        .to(Anim.jellyMs, { scale: new Vec3(0.9, 0.84, 1) }, { easing: 'quadOut' })
+        .to(0.14, { scale: new Vec3(1.08, 1.1, 1) }, { easing: 'backOut' })
+        .to(0.1, { scale: new Vec3(1, 1, 1) }, { easing: 'sineOut' })
+        .call(() => onDone?.())
+        .start();
+}
+
+/** 绑定果冻按压；TOUCH_END 时先弹再回调 */
+export function bindJellyPress(node: Node, onClick: () => void): void {
+    if (!node.getComponent(BlockInputEvents)) node.addComponent(BlockInputEvents);
+    node.on(Node.EventType.TOUCH_START, () => {
+        Tween.stopAllByTarget(node);
+        tween(node)
+            .to(Anim.jellyMs, { scale: new Vec3(0.94, 0.88, 1) }, { easing: 'quadOut' })
+            .start();
+    });
+    node.on(Node.EventType.TOUCH_CANCEL, () => {
+        Tween.stopAllByTarget(node);
+        tween(node).to(0.12, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' }).start();
+    });
+    node.on(Node.EventType.TOUCH_END, () => {
+        jellyBounce(node, onClick);
+    });
+}
+
+/** 点按星屑爆发 */
+export function sparkBurst(parent: Node, x: number, y: number, count = 8, hex = '#E8A878'): void {
+    for (let i = 0; i < count; i++) {
+        const n = makeNode(`burst${i}`, parent, 10, 10);
+        n.setPosition(x, y, 0);
+        const g = n.addComponent(Graphics);
+        g.fillColor = colorFromHex(hex, 220);
+        g.circle(0, 0, 2 + (i % 3));
+        g.fill();
+        const ang = (Math.PI * 2 * i) / count + Math.random() * 0.4;
+        const dist = 28 + Math.random() * 36;
+        const op = n.addComponent(UIOpacity);
+        op.opacity = 255;
+        tween(n)
+            .to(
+                0.38 + Math.random() * 0.12,
+                {
+                    position: new Vec3(x + Math.cos(ang) * dist, y + Math.sin(ang) * dist, 0),
+                    scale: new Vec3(0.2, 0.2, 1),
+                },
+                { easing: 'quadOut' },
+            )
+            .call(() => n.destroy())
+            .start();
+        tween(op).to(0.4, { opacity: 0 }).start();
+    }
+}
+
+/** 单次上跳（盲盒被点） */
+export function hopOnce(node: Node, hopY = 18): void {
+    const base = node.position.clone();
+    const sx = node.scale.x;
+    const sy = node.scale.y;
+    Tween.stopAllByTarget(node);
+    tween(node)
+        .to(0.12, { position: new Vec3(base.x, base.y + hopY, 0), scale: new Vec3(sx * 0.92, sy * 1.12, 1) }, { easing: 'quadOut' })
+        .to(0.16, { position: base, scale: new Vec3(sx * 1.08, sy * 0.88, 1) }, { easing: 'quadIn' })
+        .to(0.1, { scale: new Vec3(sx, sy, 1) }, { easing: 'backOut' })
         .start();
 }
 
