@@ -10,6 +10,7 @@ import {
     Vec3,
     resources,
     tween,
+    Tween,
     view,
     Graphics,
     Label,
@@ -21,8 +22,23 @@ import {
     Color,
     Vec2,
 } from 'cc';
-import { Anim, Colors, Design, difficultyTier, ITEM_MAP, ITEMS, lighten } from './core/Config';
+import {
+    Anim,
+    Colors,
+    Design,
+    PlayMode,
+    blindModeUnlocked,
+    dailyLevelId,
+    difficultyTier,
+    ITEM_MAP,
+    ITEMS,
+    lighten,
+    isPoemFamily,
+    playModeTitle,
+    resolveBoardGlyphMode,
+} from './core/Config';
 import { MatchGame, TileModel, LevelJson } from './core/MatchGame';
+import { getSafeLayout, SafeLayout } from './core/SafeArea';
 import { PropKind, SaveData } from './core/SaveData';
 import {
     formatVerseProgress,
@@ -48,6 +64,8 @@ import {
     idleSway,
     makeNode,
     makeVerticalScroll,
+    mountEmbeddedBoardGlyph,
+    hideEmbeddedBoardGlyph,
     onTapWithoutScroll,
     popIn,
     popupScaleIn,
@@ -60,7 +78,7 @@ import { flashVerseHud, playLineBrush, playVerseInkReveal, playVerseSeal } from 
 
 const { ccclass } = _decorator;
 
-type Page = 'boot' | 'home' | 'game' | 'catalog' | 'library' | 'settings' | 'about';
+type Page = 'boot' | 'home' | 'game' | 'catalog' | 'library' | 'settings' | 'about' | 'howto';
 
 @ccclass('GameApp')
 export class GameApp extends Component {
@@ -70,6 +88,8 @@ export class GameApp extends Component {
     private game = new MatchGame();
     private page: Page = 'boot';
     private currentLevel = 1;
+    /** 首页所选游戏模式 */
+    private playMode: PlayMode = 'poem';
     /** 休闲模式：通关不推进主线 */
     private leisureMode = false;
     private tileNodes = new Map<string, Node>();
@@ -118,48 +138,6 @@ export class GameApp extends Component {
         this.bootstrap();
     }
 
-    /**
-     * 微信小游戏：顶栏与右上角胶囊水平对齐（取胶囊垂直中心 → 设计坐标 Y）
-     * 非微信环境返回 null，走设计稿默认值
-     */
-    private getWechatCapsuleAlignY(): number | null {
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const wxApi = (globalThis as any).wx;
-            if (!wxApi?.getMenuButtonBoundingClientRect) return null;
-            const info = wxApi.getWindowInfo?.() ?? wxApi.getSystemInfoSync?.();
-            const menu = wxApi.getMenuButtonBoundingClientRect();
-            if (!info || !menu || !menu.height) return null;
-            const winW = info.windowWidth || info.screenWidth;
-            const winH = info.windowHeight || info.screenHeight;
-            if (!winW || !winH) return null;
-            // FIXED_WIDTH：设计宽对齐窗口宽
-            const scale = Design.width / winW;
-            const capsuleCenterFromTop = (menu.top + menu.height * 0.5) * scale;
-            const visH = winH * scale;
-            return visH * 0.5 - capsuleCenterFromTop;
-        } catch {
-            return null;
-        }
-    }
-
-    /** 微信胶囊高度 → 设计坐标，用于顶栏圆钮尺寸 */
-    private getWechatCapsuleBtnSize(fallback = 56): number {
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const wxApi = (globalThis as any).wx;
-            if (!wxApi?.getMenuButtonBoundingClientRect) return fallback;
-            const info = wxApi.getWindowInfo?.() ?? wxApi.getSystemInfoSync?.();
-            const menu = wxApi.getMenuButtonBoundingClientRect();
-            const winW = info?.windowWidth || info?.screenWidth;
-            if (!winW || !menu?.height) return fallback;
-            const scale = Design.width / winW;
-            return Math.max(48, Math.min(64, Math.round(menu.height * scale)));
-        } catch {
-            return fallback;
-        }
-    }
-
     private bootstrap() {
         this.root = makeNode('GameRoot', this.node, Design.width, Design.height);
         addBg(this.root, 'PageBg', Design.width + 40, Design.height + 40, Colors.bg);
@@ -189,20 +167,26 @@ export class GameApp extends Component {
         this.poemRevealed = 0;
     }
 
+    private nodeAlive(n: Node | null | undefined): n is Node {
+        return !!n && n.isValid;
+    }
+
     private tip(msg: string) {
-        if (!this.tipLabel || !this.tipLabel.isValid) {
+        const tipOk = !!this.tipLabel?.isValid && this.nodeAlive(this.tipLabel.node);
+        if (!tipOk) {
+            if (!this.nodeAlive(this.overlayRoot)) return;
             const lab = addLabel(this.overlayRoot, 'tip', msg, 26, Colors.highlight, 560, 48, true);
-            lab.node.setPosition(0, 420, 0);
+            lab.node.setPosition(0, 200, 0);
             this.tipLabel = lab;
         } else {
-            this.tipLabel.string = msg;
+            this.tipLabel!.string = msg;
         }
-        const n = this.tipLabel.node;
+        const n = this.tipLabel!.node;
+        if (!this.nodeAlive(n)) return;
         setOpacity(n, 255);
-        tween(n.getComponent(UIOpacity)!)
-            .delay(1.2)
-            .to(0.25, { opacity: 0 })
-            .start();
+        const op = n.getComponent(UIOpacity) || n.addComponent(UIOpacity);
+        Tween.stopAllByTarget(op);
+        tween(op).delay(1.2).to(0.25, { opacity: 0 }).start();
     }
 
     // ---------------- Boot ----------------
@@ -261,13 +245,75 @@ export class GameApp extends Component {
         }
     };
 
-    /** 首页氛围：整屏单色宣纸底，不分层 */
+    /** 首页氛围：暖宣纸底 + 轻软斑点与角隅晕染（可爱但不花哨） */
     private drawHomeAtmosphere(parent: Node, visH: number): Node {
         const root = makeNode('atmosphere', parent, Design.width, visH);
         const g = root.addComponent(Graphics);
-        g.fillColor = colorFromHex('#F3E8D8');
+        g.fillColor = colorFromHex('#F6EDE0');
         g.rect(-Design.width * 0.5, -visH * 0.5, Design.width, visH);
         g.fill();
+        // 上下柔晕，让中间内容更跳
+        g.fillColor = colorFromHex('#EED9C2', 90);
+        g.ellipse(0, visH * 0.42, 420, 120);
+        g.fill();
+        g.fillColor = colorFromHex('#E8C9A8', 55);
+        g.ellipse(0, -visH * 0.46, 380, 90);
+        g.fill();
+        // 纸纤维小点
+        const flecks = [
+            [-280, 380, 3],
+            [260, 340, 2.5],
+            [-220, -420, 2],
+            [240, -380, 3],
+            [-300, 80, 2],
+            [290, -60, 2.5],
+            [-160, 480, 2],
+            [180, 460, 2],
+        ];
+        flecks.forEach(([x, y, r]) => {
+            g.fillColor = colorFromHex('#C4A36A', 70);
+            g.circle(x, y * (visH / 1280), r);
+            g.fill();
+        });
+        // 角隅小云朵（软圆）
+        const puff = (px: number, py: number, s: number) => {
+            g.fillColor = colorFromHex('#FFF8F0', 160);
+            g.circle(px, py, 18 * s);
+            g.fill();
+            g.circle(px + 16 * s, py + 4 * s, 14 * s);
+            g.fill();
+            g.circle(px - 14 * s, py + 2 * s, 12 * s);
+            g.fill();
+        };
+        puff(-280, visH * 0.28, 1.1);
+        puff(270, visH * 0.22, 0.9);
+        puff(-250, -visH * 0.3, 0.85);
+        this.disableHit(root);
+        return root;
+    }
+
+    /** 首页点缀：漂浮小星点 */
+    private drawHomeSparkles(parent: Node, y: number) {
+        const root = makeNode('sparkles', parent, 640, 80);
+        root.setPosition(0, y, 0);
+        const spots = [
+            { x: -260, y: 10, r: 4 },
+            { x: 250, y: -6, r: 3 },
+            { x: -200, y: -18, r: 2.5 },
+            { x: 210, y: 16, r: 3.5 },
+        ];
+        spots.forEach((s, i) => {
+            const n = makeNode(`sp${i}`, root, 16, 16);
+            n.setPosition(s.x, s.y, 0);
+            const g = n.addComponent(Graphics);
+            g.fillColor = colorFromHex('#E8A878', 180);
+            g.circle(0, 0, s.r);
+            g.fill();
+            g.fillColor = colorFromHex('#FFF6EE', 200);
+            g.circle(-s.r * 0.25, s.r * 0.25, s.r * 0.35);
+            g.fill();
+            idleFloat(n, 4 + (i % 2), 1.4 + i * 0.15, i * 0.12);
+        });
         this.disableHit(root);
         return root;
     }
@@ -326,7 +372,7 @@ export class GameApp extends Component {
     }
 
     /**
-     * 首页主视觉：木匣展台 + 宝石色盲盒堆叠，撑满中段
+     * 首页主视觉：圆角木匣 + 彩色盲盒 + 探头猫 + 礼盒
      */
     private drawHomeHero(parent: Node, y: number, height = 300): { root: Node; height: number } {
         const h = height;
@@ -335,54 +381,54 @@ export class GameApp extends Component {
         const g = hero.addComponent(Graphics);
         const sy = h / 300;
 
-        // 展台底座
-        g.fillColor = colorFromHex('#C9A882', 90);
-        g.roundRect(-260 * sy, -132 * sy, 520 * sy, 36 * sy, 14);
+        // 展台软影 + 圆润底座
+        g.fillColor = colorFromHex('#C9A882', 70);
+        g.ellipse(0, -128 * sy, 250 * sy, 22 * sy);
         g.fill();
-        g.fillColor = colorFromHex('#8B6848');
-        g.roundRect(-240 * sy, -122 * sy, 480 * sy, 16 * sy, 6);
+        g.fillColor = colorFromHex('#E8C9A0');
+        g.roundRect(-250 * sy, -126 * sy, 500 * sy, 28 * sy, 16);
         g.fill();
         g.fillColor = colorFromHex('#A67C52');
-        g.roundRect(-230 * sy, -118 * sy, 460 * sy, 6 * sy, 3);
+        g.roundRect(-236 * sy, -118 * sy, 472 * sy, 10 * sy, 5);
         g.fill();
 
-        // 书柜木匣
+        // 书柜：更大圆角 + 内衬暖光
         g.fillColor = colorFromHex('#E8D2B4');
-        g.roundRect(-200 * sy, -98 * sy, 320 * sy, 220 * sy, 14);
+        g.roundRect(-200 * sy, -98 * sy, 320 * sy, 220 * sy, 22);
         g.fill();
-        g.fillColor = colorFromHex('#F4E6D0');
-        g.roundRect(-188 * sy, -86 * sy, 296 * sy, 196 * sy, 10);
+        g.fillColor = colorFromHex('#FFF6EA');
+        g.roundRect(-186 * sy, -84 * sy, 292 * sy, 192 * sy, 16);
         g.fill();
-        g.strokeColor = colorFromHex('#8B6848', 180);
-        g.lineWidth = 2;
-        g.roundRect(-200 * sy, -98 * sy, 320 * sy, 220 * sy, 14);
+        g.strokeColor = colorFromHex('#C4A36A', 160);
+        g.lineWidth = 2.2;
+        g.roundRect(-200 * sy, -98 * sy, 320 * sy, 220 * sy, 22);
         g.stroke();
         // 层板
-        g.fillColor = colorFromHex('#B8956A');
-        g.roundRect(-176 * sy, 8 * sy, 272 * sy, 7 * sy, 2);
+        g.fillColor = colorFromHex('#D4B48A');
+        g.roundRect(-172 * sy, 8 * sy, 264 * sy, 8 * sy, 4);
         g.fill();
-        g.fillColor = colorFromHex('#C4A36A', 120);
-        g.roundRect(-176 * sy, 12 * sy, 272 * sy, 2 * sy, 1);
+        g.fillColor = colorFromHex('#F0E0C0', 160);
+        g.roundRect(-172 * sy, 13 * sy, 264 * sy, 2 * sy, 1);
         g.fill();
 
-        // 更克制的宝石色（去糖果感）
+        // 略提饱和，更活泼
         const topRow: { x: number; y: number; s: number; top: string; side: string }[] = [
-            { x: -118, y: 58, s: 50, top: '#5A7EB5', side: '#3E5A86' },
-            { x: -62, y: 62, s: 52, top: '#5FA879', side: '#3E7A56' },
-            { x: -4, y: 56, s: 54, top: '#D08A48', side: '#A86830' },
-            { x: 54, y: 60, s: 50, top: '#C45C4A', side: '#9A3E34' },
-            { x: 108, y: 57, s: 48, top: '#D4B05A', side: '#A88838' },
+            { x: -118, y: 58, s: 50, top: '#6B94D4', side: '#4A6FA8' },
+            { x: -62, y: 62, s: 52, top: '#6FBE88', side: '#4A9660' },
+            { x: -4, y: 56, s: 54, top: '#E09858', side: '#B87038' },
+            { x: 54, y: 60, s: 50, top: '#E07060', side: '#B04A40' },
+            { x: 108, y: 57, s: 48, top: '#E0C068', side: '#B89840' },
         ];
         const midRow: { x: number; y: number; s: number; top: string; side: string }[] = [
-            { x: -90, y: -2, s: 56, top: '#6AA8B8', side: '#458090' },
-            { x: -28, y: 6, s: 60, top: '#D49AA8', side: '#B07080' },
-            { x: 36, y: 0, s: 58, top: '#D4BC78', side: '#A89450' },
-            { x: 96, y: 4, s: 54, top: '#6AAB7E', side: '#488860' },
+            { x: -90, y: -2, s: 56, top: '#78BCC8', side: '#508898' },
+            { x: -28, y: 6, s: 60, top: '#E8A8B4', side: '#C07888' },
+            { x: 36, y: 0, s: 58, top: '#E0C888', side: '#B8A058' },
+            { x: 96, y: 4, s: 54, top: '#78B888', side: '#509868' },
         ];
         const frontRow: { x: number; y: number; s: number; top: string; side: string }[] = [
-            { x: -58, y: -58, s: 62, top: '#C45C4A', side: '#963C34' },
-            { x: 6, y: -50, s: 70, top: '#E0A86A', side: '#B88848' },
-            { x: 70, y: -60, s: 60, top: '#8A78B0', side: '#645488' },
+            { x: -58, y: -58, s: 62, top: '#E07060', side: '#A84840' },
+            { x: 6, y: -50, s: 70, top: '#F0B878', side: '#C89050' },
+            { x: 70, y: -60, s: 60, top: '#A090C8', side: '#7870A0' },
         ];
         [...topRow, ...midRow, ...frontRow].forEach((b) =>
             this.paintMiniIsoBox(g, b.x * sy, b.y * sy, b.s * sy, b.top, b.side),
@@ -390,8 +436,8 @@ export class GameApp extends Component {
 
         const gift = this.drawDecorGift(hero, 198 * sy, 18 * sy);
         gift.setScale(1.15 * sy, 1.15 * sy, 1);
-        idleSway(gift, 3.5, 1.8, 0.2);
-        idleFloat(gift, 6, 2.1, 0.1);
+        idleSway(gift, 4, 1.6, 0.2);
+        idleFloat(gift, 7, 1.9, 0.1);
 
         return { root: hero, height: h };
     }
@@ -663,26 +709,31 @@ export class GameApp extends Component {
         const save = SaveData.load();
         const lv = Math.max(1, Math.min(Design.totalLevels, save.maxUnlocked));
         const verse = getVerseForLevel(lv);
+        const dailyId = dailyLevelId();
+        const dailyVerse = getVerseForLevel(dailyId);
+        const blindOk = blindModeUnlocked(save.maxUnlocked);
 
-        const visH = this.getVisibleDesignHeight();
-        const half = visH * 0.5;
+        const safe = getSafeLayout();
+        const visH = safe.visH;
         this.drawHomeAtmosphere(p, visH);
 
-        // 整块内容按固定间距堆叠后垂直居中（不再顶底拉开）
-        const brandH = 54;
-        const tagH = 24;
-        const hookH = 22;
-        const ctaH = 92;
-        const linksH = 32;
+        const brandH = 52;
+        const tagH = 22;
+        const hookH = 32;
+        const primaryH = 96;
+        const modeH = 64;
+        const linksH = 40;
         const footH = 22;
-        // 四大模块：标题块 / 主视觉 / CTA / 底链 —— 模块间距拉开
-        const gapBrandTag = 8;
-        const gapTagHook = 6;
-        const gapHookHero = 36;
-        const gapHeroCta = 40;
-        const gapCtaLinks = 32;
-        const gapLinksFoot = 12;
-        const heroH = Math.min(300, Math.max(240, visH * 0.28));
+        const gapBrandTag = 6;
+        const gapTagHook = 4;
+        const gapHookHero = 20;
+        const gapHeroModes = 22;
+        const gapPrimaryMode = 12;
+        const gapModeMode = 10;
+        const gapModesLinks = 22;
+        const gapLinksFoot = 10;
+        const heroH = Math.min(220, Math.max(160, visH * 0.2));
+        const modesH = primaryH + gapPrimaryMode + modeH + gapModeMode + modeH;
         const totalH =
             brandH +
             gapBrandTag +
@@ -691,15 +742,15 @@ export class GameApp extends Component {
             hookH +
             gapHookHero +
             heroH +
-            gapHeroCta +
-            ctaH +
-            gapCtaLinks +
+            gapHeroModes +
+            modesH +
+            gapModesLinks +
             linksH +
             gapLinksFoot +
             footH;
 
-        const safeTop = Math.min(half - 36, this.getWechatCapsuleAlignY() ?? half - 44);
-        const safeBot = -half + 16;
+        const safeTop = safe.contentTop - 8;
+        const safeBot = safe.contentBottom + 8;
         let shiftY = 0;
         const topEdge = totalH * 0.5;
         const botEdge = -totalH * 0.5;
@@ -714,9 +765,13 @@ export class GameApp extends Component {
         const hookY = cursor - hookH * 0.5;
         cursor -= hookH + gapHookHero;
         const heroY = cursor - heroH * 0.5;
-        cursor -= heroH + gapHeroCta;
-        const ctaY = cursor - ctaH * 0.5;
-        cursor -= ctaH + gapCtaLinks;
+        cursor -= heroH + gapHeroModes;
+        const primaryY = cursor - primaryH * 0.5;
+        cursor -= primaryH + gapPrimaryMode;
+        const dailyY = cursor - modeH * 0.5;
+        cursor -= modeH + gapModeMode;
+        const blindY = cursor - modeH * 0.5;
+        cursor -= modeH + gapModesLinks;
         const linksY = cursor - linksH * 0.5;
         cursor -= linksH + gapLinksFoot;
         const footY = cursor - footH * 0.5;
@@ -724,120 +779,183 @@ export class GameApp extends Component {
         const ink = '#2F2118';
         const lacquer = '#C45C3A';
 
-        const brandLab = addLabel(p, 'brand', '架了个架', 54, ink, 640, brandH, true);
-        brandLab.spacingX = 6;
+        const brandLab = addLabel(p, 'brand', '架了个架', 52, ink, 640, brandH, true);
+        brandLab.spacingX = 8;
         const brand = brandLab.node;
         brand.setPosition(0, brandY, 0);
 
-        // 品牌下细金线
-        const rule = makeNode('rule', p, 160, 8);
+        const decoL = makeNode('decoL', p, 24, 36);
+        decoL.setPosition(-168, brandY + 4, 0);
+        const dlg = decoL.addComponent(Graphics);
+        dlg.fillColor = colorFromHex('#E07858');
+        dlg.roundRect(-6, -14, 12, 28, 3);
+        dlg.fill();
+        dlg.fillColor = colorFromHex('#E8C98A');
+        dlg.circle(0, 10, 3);
+        dlg.fill();
+        const decoR = makeNode('decoR', p, 24, 36);
+        decoR.setPosition(168, brandY + 4, 0);
+        const drg = decoR.addComponent(Graphics);
+        drg.fillColor = colorFromHex('#6FBE88');
+        drg.roundRect(-6, -14, 12, 28, 3);
+        drg.fill();
+        drg.fillColor = colorFromHex('#E8C98A');
+        drg.circle(0, 10, 3);
+        drg.fill();
+
+        const rule = makeNode('rule', p, 200, 12);
         rule.setPosition(0, brandY - brandH * 0.5 - 2, 0);
         const rg = rule.addComponent(Graphics);
-        rg.strokeColor = colorFromHex('#C4A36A', 200);
-        rg.lineWidth = 1.5;
-        rg.moveTo(-70, 0);
-        rg.lineTo(70, 0);
+        rg.strokeColor = colorFromHex('#E8C98A', 180);
+        rg.lineWidth = 2;
+        rg.moveTo(-80, 0);
+        rg.lineTo(80, 0);
         rg.stroke();
-        rg.fillColor = colorFromHex('#C4A36A', 220);
-        rg.circle(0, 0, 2.5);
+        rg.fillColor = colorFromHex('#E07858', 200);
+        rg.circle(0, 0, 3.5);
         rg.fill();
 
-        const tagLab = addLabel(p, 'tag', '书架盲盒馆', 22, lacquer, 400, tagH, true);
-        tagLab.spacingX = 4;
-        const tag = tagLab.node;
-        tag.setPosition(0, tagY, 0);
+        const tagLab = addLabel(p, 'tag', '书架盲盒馆', 20, lacquer, 400, tagH, true);
+        tagLab.spacingX = 5;
+        tagLab.node.setPosition(0, tagY, 0);
 
-        const hook = addLabel(
-            p,
+        const hookChip = makeNode('hookChip', p, 560, 34);
+        hookChip.setPosition(0, hookY, 0);
+        const hcg = hookChip.addComponent(Graphics);
+        hcg.fillColor = colorFromHex('#FFF8F0', 220);
+        hcg.roundRect(-250, -15, 500, 30, 15);
+        hcg.fill();
+        hcg.strokeColor = colorFromHex('#E8C9A0', 160);
+        hcg.lineWidth = 1.5;
+        hcg.roundRect(-250, -15, 500, 30, 15);
+        hcg.stroke();
+        addLabel(
+            hookChip,
             'hook',
-            `按序点亮「${verse.title}」 · 错字进散页匣`,
-            17,
+            '两种玩法 · 三消消消 · 古诗点亮',
+            16,
             '#8A7460',
-            600,
+            480,
             hookH,
             true,
-        ).node;
-        hook.setPosition(0, hookY, 0);
+        ).node.setPosition(0, 0, 0);
 
+        this.drawHomeSparkles(p, heroY + heroH * 0.42);
         const { root: hero } = this.drawHomeHero(p, heroY, heroH);
         hero.addComponent(BlockInputEvents);
         hero.on(Node.EventType.TOUCH_END, () => this.showCatalog());
-        const giftNode = hero.getChildByName('gift');
-        if (giftNode) {
-            giftNode.addComponent(BlockInputEvents);
-            giftNode.on(Node.EventType.TOUCH_END, (e: EventTouch) => {
-                e.propagationStopped = true;
-                this.showCatalog();
-            });
-        }
 
-        const startBtn = this.drawHomePrimaryCta(
+        const poemBtn = this.drawHomePrimaryCta(
             p,
-            '点亮书架',
-            `第 ${lv} 关　·　${verse.title}`,
-            () => {
-                this.leisureMode = false;
-                this.enterGame(lv);
-            },
+            '古诗',
+            `按诗句点亮　·　第 ${lv} 关「${verse.title}」`,
+            () => this.startPlayMode('poem', lv),
         );
-        startBtn.setPosition(0, ctaY, 0);
+        poemBtn.setPosition(0, primaryY, 0);
+
+        const matchBtn = this.drawHomeModeCard(
+            p,
+            '三消',
+            '相同盲盒进匣，凑齐三个消除',
+            '#E07058',
+            () => this.startPlayMode('match3', lv),
+        );
+        matchBtn.setPosition(0, dailyY, 0);
+
+        const dailyBtn = this.drawHomeModeCard(
+            p,
+            '今日一句',
+            `今日「${dailyVerse.title}」· 古诗短关`,
+            '#6FBE88',
+            () => this.startPlayMode('daily', dailyId),
+        );
+        dailyBtn.setPosition(0, blindY, 0);
 
         const links = this.drawHomeTextLinks(
             p,
             [
+                {
+                    name: '盲翻',
+                    fn: () => {
+                        if (!blindOk) {
+                            this.tip('先通关第 3 关，再来挑战盲翻');
+                            return;
+                        }
+                        this.startPlayMode('blind', lv);
+                    },
+                },
                 { name: '选关', fn: () => this.showLevelPickPopup() },
                 { name: '图鉴', fn: () => this.showCatalog() },
                 { name: '文藏', fn: () => this.showLibrary('poem') },
-                { name: '休闲', fn: () => this.onLeisureMode() },
+                { name: '玩法', fn: () => this.showHowTo() },
                 { name: '设置', fn: () => this.showSettings() },
             ],
-            118,
+            102,
         );
         links.setPosition(0, linksY, 0);
 
-        const foot = addLabel(p, 'foot', 'v1.0.0　·　无账号 · 无存档', 14, '#A09080', 560, footH, true);
+        const foot = addLabel(p, 'foot', 'v1.0.0　·　无账号 · 无存档', 14, '#B8A090', 560, footH, true);
         foot.node.setPosition(0, footY, 0);
         foot.node.addComponent(BlockInputEvents);
         foot.node.on(Node.EventType.TOUCH_END, () => this.showLegalPopup());
 
         popIn(brand, 0.02, 0.88);
+        popIn(decoL, 0.04, 0.5);
+        popIn(decoR, 0.05, 0.5);
         popIn(rule, 0.06, 0.5);
-        popIn(tag, 0.08, 0.92);
-        popIn(hook, 0.1, 0.94);
+        popIn(tagLab.node, 0.08, 0.92);
+        popIn(hookChip, 0.1, 0.9);
         popIn(hero, 0.12, 0.86);
-        popIn(startBtn, 0.2, 0.78);
-        popIn(links, 0.26, 0.92);
+        popIn(poemBtn, 0.18, 0.78);
+        popIn(matchBtn, 0.22, 0.82);
+        popIn(dailyBtn, 0.26, 0.82);
+        popIn(links, 0.3, 0.92);
 
-        idleFloat(hero, 5, 2.4, 0.3);
-        idleBreathe(startBtn, 0.014, 1.6, 0.6);
+        idleFloat(hero, 4, 2.6, 0.3);
+        idleFloat(decoL, 3, 1.8, 0.2);
+        idleFloat(decoR, 3, 2.0, 0.35);
+        idleBreathe(poemBtn, 0.018, 1.5, 0.5);
+        idleSway(hookChip, 1.2, 2.2, 0.8);
     }
 
-    private drawHomePrimaryCta(parent: Node, title: string, sub: string, onClick: () => void): Node {
+    private startPlayMode(mode: PlayMode, levelId: number) {
+        this.playMode = mode;
+        this.leisureMode = mode !== 'poem';
+        if (mode === 'match3') this.tip('三消 · 凑齐三个相同盲盒');
+        else if (mode === 'daily') this.tip(`今日一句 · ${getVerseForLevel(levelId).title}`);
+        else if (mode === 'blind') this.tip('盲翻局 · 场上不露字');
+        else this.tip(`古诗 · ${getVerseForLevel(levelId).title}`);
+        this.enterGame(levelId, mode);
+        if (mode === 'daily' || mode === 'match3') {
+            this.game.freePropsLeft += 1;
+            this.refreshEconomyHud();
+        }
+    }
+
+    /** 首页次级模式卡片 */
+    private drawHomeModeCard(
+        parent: Node,
+        title: string,
+        sub: string,
+        accent: string,
+        onClick: () => void,
+    ): Node {
         const w = 520;
-        const h = 92;
-        const node = makeNode('start', parent, w, h);
+        const h = 64;
+        const node = makeNode(`mode_${title}`, parent, w, h);
         const g = node.addComponent(Graphics);
-        // 木色底托
-        g.fillColor = colorFromHex('#6B4A2E', 40);
-        g.roundRect(-w * 0.5 + 4, -h * 0.5 - 4, w - 8, h, 22);
+        g.fillColor = colorFromHex('#FFF8F0', 240);
+        g.roundRect(-w * 0.5, -h * 0.5, w, h, 18);
         g.fill();
-        // 漆面主体
-        g.fillColor = colorFromHex('#C45C3A');
-        g.roundRect(-w * 0.5, -h * 0.5, w, h, 22);
-        g.fill();
-        // 上部柔亮
-        g.fillColor = colorFromHex('#E07858');
-        g.roundRect(-w * 0.5 + 3, -h * 0.5 + 4, w - 6, h * 0.48, 18);
-        g.fill();
-        // 金边
-        g.strokeColor = colorFromHex('#E8C98A');
-        g.lineWidth = 1.8;
-        g.roundRect(-w * 0.5 + 2, -h * 0.5 + 2, w - 4, h - 4, 20);
+        g.strokeColor = colorFromHex(accent, 200);
+        g.lineWidth = 2;
+        g.roundRect(-w * 0.5, -h * 0.5, w, h, 18);
         g.stroke();
-        const t = addLabel(node, 't', title, 34, '#FFF8F0', w - 24, 42, true);
-        t.spacingX = 4;
-        t.node.setPosition(0, 12, 0);
-        addLabel(node, 's', sub, 18, '#FFE8D8', w - 40, 28, true).node.setPosition(0, -22, 0);
+        g.fillColor = colorFromHex(accent);
+        g.roundRect(-w * 0.5 + 10, -10, 6, 20, 3);
+        g.fill();
+        addLabel(node, 't', title, 26, Colors.brown, w - 48, 32, true).node.setPosition(0, 8, 0);
+        addLabel(node, 's', sub, 15, Colors.text, w - 48, 24, false).node.setPosition(0, -14, 0);
         node.addComponent(BlockInputEvents);
         node.on(Node.EventType.TOUCH_START, () => {
             tween(node).to(Anim.btnMs, { scale: new Vec3(0.97, 0.97, 1) }, { easing: 'quadOut' }).start();
@@ -854,26 +972,78 @@ export class GameApp extends Component {
         return node;
     }
 
-    /** 轻量文字入口，项间细点分隔 */
+    private drawHomePrimaryCta(parent: Node, title: string, sub: string, onClick: () => void): Node {
+        const w = 520;
+        const h = 96;
+        const node = makeNode('start', parent, w, h);
+        const g = node.addComponent(Graphics);
+        // 软阴影
+        g.fillColor = colorFromHex('#C45C3A', 45);
+        g.roundRect(-w * 0.5 + 6, -h * 0.5 - 6, w - 12, h, 28);
+        g.fill();
+        // 漆面主体（更圆）
+        g.fillColor = colorFromHex('#E07058');
+        g.roundRect(-w * 0.5, -h * 0.5, w, h, 28);
+        g.fill();
+        // 上部柔亮
+        g.fillColor = colorFromHex('#F09070');
+        g.roundRect(-w * 0.5 + 4, -h * 0.5 + 5, w - 8, h * 0.46, 24);
+        g.fill();
+        // 亮边
+        g.strokeColor = colorFromHex('#FFE0C8', 200);
+        g.lineWidth = 2;
+        g.roundRect(-w * 0.5 + 3, -h * 0.5 + 3, w - 6, h - 6, 26);
+        g.stroke();
+        // 两侧小圆点装饰
+        g.fillColor = colorFromHex('#FFE8D0', 200);
+        g.circle(-w * 0.5 + 22, 0, 4);
+        g.fill();
+        g.circle(w * 0.5 - 22, 0, 4);
+        g.fill();
+        const t = addLabel(node, 't', title, 36, '#FFF8F0', w - 24, 42, true);
+        t.spacingX = 6;
+        t.node.setPosition(0, 12, 0);
+        addLabel(node, 's', sub, 18, '#FFE8D8', w - 40, 28, true).node.setPosition(0, -22, 0);
+        node.addComponent(BlockInputEvents);
+        node.on(Node.EventType.TOUCH_START, () => {
+            tween(node).to(Anim.btnMs, { scale: new Vec3(0.96, 0.96, 1) }, { easing: 'quadOut' }).start();
+        });
+        node.on(Node.EventType.TOUCH_CANCEL, () => {
+            tween(node).to(Anim.btnMs, { scale: new Vec3(1, 1, 1) }).start();
+        });
+        node.on(Node.EventType.TOUCH_END, () => {
+            tween(node)
+                .to(Anim.btnMs, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' })
+                .call(onClick)
+                .start();
+        });
+        return node;
+    }
+
+    /** 软胶囊文字入口 */
     private drawHomeTextLinks(
         parent: Node,
         items: { name: string; fn: () => void }[],
         step = 200,
     ): Node {
-        const root = makeNode('links', parent, 640, 40);
-        const g = root.addComponent(Graphics);
+        const root = makeNode('links', parent, 680, 48);
         items.forEach((it, i) => {
             const x = (i - (items.length - 1) / 2) * step;
-            if (i > 0) {
-                const mid = x - step * 0.5;
-                g.fillColor = colorFromHex('#C4A36A', 140);
-                g.circle(mid, 0, 2);
-                g.fill();
-            }
-            const lab = addLabel(root, `l${i}`, it.name, 20, '#5C4030', Math.min(200, step - 8), 36, true);
-            lab.node.setPosition(x, 0, 0);
-            lab.node.addComponent(BlockInputEvents);
-            lab.node.on(Node.EventType.TOUCH_END, () => it.fn());
+            const chipW = Math.min(88, step - 10);
+            const chip = makeNode(`chip${i}`, root, chipW, 36);
+            chip.setPosition(x, 0, 0);
+            const cg = chip.addComponent(Graphics);
+            cg.fillColor = colorFromHex('#FFF8F0', 230);
+            cg.roundRect(-chipW * 0.5, -16, chipW, 32, 16);
+            cg.fill();
+            cg.strokeColor = colorFromHex('#E8C9A0', 140);
+            cg.lineWidth = 1.2;
+            cg.roundRect(-chipW * 0.5, -16, chipW, 32, 16);
+            cg.stroke();
+            const lab = addLabel(chip, 't', it.name, 18, '#6B4A30', chipW - 8, 30, true);
+            lab.node.setPosition(0, 0, 0);
+            chip.addComponent(BlockInputEvents);
+            chip.on(Node.EventType.TOUCH_END, () => it.fn());
         });
         return root;
     }
@@ -923,8 +1093,7 @@ export class GameApp extends Component {
                 cell.on(Node.EventType.TOUCH_END, () => {
                     mask.destroy();
                     panel.destroy();
-                    this.leisureMode = false;
-                    this.enterGame(id);
+                    this.startPlayMode('poem', id);
                 });
             }
         }
@@ -959,10 +1128,10 @@ export class GameApp extends Component {
         };
         const startLeisure = (id: number) => {
             close();
+            this.playMode = 'poem';
             this.leisureMode = true;
             this.tip(`休闲 · 第 ${id} 关`);
-            this.enterGame(id);
-            // enterGame 后补一次免费道具
+            this.enterGame(id, 'poem');
             this.game.freePropsLeft += 1;
             this.refreshEconomyHud();
         };
@@ -1043,12 +1212,10 @@ export class GameApp extends Component {
         this.clearPage();
         this.page = 'catalog';
         const p = this.pageRoot;
-
-        addCircleBtn(p, 'back', '←', 64, () => this.showHome()).setPosition(-300, 540, 0);
-        addLabel(p, 'title', '盲盒图鉴', 36, Colors.brown, 400, 50, true).node.setPosition(0, 540, 0);
+        const safe = this.placePageHeader(p, '盲盒图鉴', () => this.showHome());
 
         const grid = makeNode('grid', p, 640, 900);
-        grid.setPosition(0, -20, 0);
+        grid.setPosition(0, (safe.contentBottom + safe.contentTop) * 0.5, 0);
         ITEMS.forEach((item, i) => {
             const col = i % 2;
             const row = Math.floor(i / 2);
@@ -1075,15 +1242,19 @@ export class GameApp extends Component {
         const p = this.pageRoot;
         const list = versesByKind(tab);
 
-        addCircleBtn(p, 'back', '←', 64, () => this.showHome()).setPosition(-300, 540, 0);
-        addLabel(p, 'title', '文藏馆', 34, Colors.brown, 360, 50, true).node.setPosition(0, 540, 0);
-        addLabel(p, 'prog', `${list.length} 篇`, 20, Colors.highlight, 200, 36, true).node.setPosition(270, 540, 0);
+        const safe = this.placePageHeader(p, '文藏馆', () => this.showHome());
+        addLabel(p, 'prog', `${list.length} 篇`, 20, Colors.highlight, 200, 36, true).node.setPosition(
+            270,
+            safe.headerY,
+            0,
+        );
 
         const tabs: { id: VerseKind; name: string }[] = [
             { id: 'poem', name: '古诗' },
             { id: 'quote', name: '名言' },
             { id: 'prose', name: '文言文' },
         ];
+        const tabY = safe.headerY - safe.headerBtnSize * 0.5 - 36;
         tabs.forEach((t, i) => {
             addButton(
                 p,
@@ -1094,19 +1265,22 @@ export class GameApp extends Component {
                 tab === t.id ? Colors.btnAd : Colors.btnShare,
                 () => this.showLibrary(t.id),
                 { fontSize: 22, textHex: Colors.brown },
-            ).node.setPosition(-170 + i * 170, 460, 0);
+            ).node.setPosition(-170 + i * 170, tabY, 0);
         });
 
         addLabel(p, 'hint', `${verseKindLabel(tab)} · 点击阅读`, 18, Colors.text, 560, 28, true).node.setPosition(
             0,
-            400,
+            tabY - 40,
             0,
         );
 
-        const board = addBg(p, 'board', 640, 820, Colors.panel, 16);
-        board.setPosition(0, -50, 0);
+        const boardTop = tabY - 56;
+        const boardBot = safe.contentBottom + 8;
+        const boardH = Math.max(420, boardTop - boardBot);
+        const board = addBg(p, 'board', 640, boardH, Colors.panel, 16);
+        board.setPosition(0, (boardTop + boardBot) * 0.5, 0);
 
-        const viewH = 780;
+        const viewH = boardH - 40;
         const cellH = 96;
         const gap = 8;
         const pad = 12;
@@ -1147,8 +1321,7 @@ export class GameApp extends Component {
         this.clearPage();
         this.page = 'settings';
         const p = this.pageRoot;
-        addCircleBtn(p, 'back', '←', 64, () => this.showHome()).setPosition(-300, 540, 0);
-        addLabel(p, 'title', '设置', 36, Colors.brown, 400, 50, true).node.setPosition(0, 540, 0);
+        const safe = this.placePageHeader(p, '设置', () => this.showHome());
 
         const list = [
             {
@@ -1160,14 +1333,16 @@ export class GameApp extends Component {
                 },
                 right: SaveData.load().soundOn ? '开' : '关',
             },
+            { name: '玩法说明', action: () => this.showHowTo('settings'), right: '>' },
             { name: '用户协议', action: () => this.showLegalPopup(), right: '>' },
             { name: '隐私协议', action: () => this.showLegalPopup(), right: '>' },
             { name: '关于游戏', action: () => this.showAbout(), right: 'i' },
         ];
 
+        const listTop = safe.headerY - safe.headerBtnSize * 0.5 - 48;
         list.forEach((item, i) => {
             const row = addBg(p, `row${i}`, 640, 88, Colors.panel, 12);
-            row.setPosition(0, 380 - i * 100, 0);
+            row.setPosition(0, listTop - i * 100, 0);
             addLabel(row, 'n', item.name, 28, Colors.title, 400, 40, true).node.setPosition(-80, 0, 0);
             if (item.name === '音效') {
                 const tog = addBg(
@@ -1191,8 +1366,7 @@ export class GameApp extends Component {
         this.clearPage();
         this.page = 'about';
         const p = this.pageRoot;
-        addCircleBtn(p, 'back', '←', 64, () => this.showSettings()).setPosition(-300, 540, 0);
-        addLabel(p, 'title', '关于游戏', 36, Colors.brown, 400, 50, true).node.setPosition(0, 540, 0);
+        const safe = this.placePageHeader(p, '关于游戏', () => this.showSettings());
         addLabel(p, 'name', '架了个架-书架盲盒馆 v1.0.0', 28, Colors.title, 600, 50, true).node.setPosition(0, 200, 0);
         addLabel(
             p,
@@ -1203,36 +1377,109 @@ export class GameApp extends Component {
             600,
             120,
         ).node.setPosition(0, 80, 0);
-        addLabel(p, 'copy', '©2026', 20, Colors.text, 200, 30).node.setPosition(0, -500, 0);
+        addButton(p, 'howto', '查看玩法说明', 280, 64, Colors.btnMain, () => this.showHowTo('about'), {
+            textHex: Colors.brown,
+            fontSize: 26,
+        }).node.setPosition(0, -40, 0);
+        addLabel(p, 'copy', '©2026', 20, Colors.text, 200, 30).node.setPosition(0, safe.contentBottom + 24, 0);
     }
 
-    /**
-     * 当前可见高度（设计坐标）。FIXED_WIDTH 下不同机型高宽比不同，
-     * 对局页必须按可见高度排版，才能一屏放下。
-     */
-    private getVisibleDesignHeight(): number {
-        try {
-            const vs = view.getVisibleSize();
-            if (vs?.height > 200) return vs.height;
-        } catch {
-            /* ignore */
-        }
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const wxApi = (globalThis as any).wx;
-            const info = wxApi?.getWindowInfo?.() ?? wxApi?.getSystemInfoSync?.();
-            const winW = info?.windowWidth || info?.screenWidth;
-            const winH = info?.windowHeight || info?.screenHeight;
-            if (winW && winH) return (winH * Design.width) / winW;
-        } catch {
-            /* ignore */
-        }
-        return Design.height;
+    /** 点亮书架：玩法说明 */
+    private showHowTo(from: 'home' | 'settings' | 'about' = 'home') {
+        this.clearPage();
+        this.page = 'howto';
+        const p = this.pageRoot;
+        const back = () => {
+            if (from === 'settings') this.showSettings();
+            else if (from === 'about') this.showAbout();
+            else this.showHome();
+        };
+        const safe = this.placePageHeader(p, '玩法说明', back);
+
+        const cardW = 640;
+        const boardTop = safe.headerY - safe.headerBtnSize * 0.5 - 20;
+        const boardBot = safe.contentBottom + 8;
+        const viewH = Math.max(420, boardTop - boardBot);
+        const board = addBg(p, 'board', cardW, viewH, Colors.panel, 16);
+        board.setPosition(0, (boardTop + boardBot) * 0.5, 0);
+        strokeRect(board.getComponent(Graphics)!, cardW, viewH, Colors.boardBorder, 2, 16);
+
+        const sections: { title: string; body: string }[] = [
+            {
+                title: '两种形式',
+                body: '三消：点顶层盲盒进匣，相同类型凑齐三个自动消除，清空通关。古诗：按诗句顺序点亮汉字，点错进匣，匣内可再点亮下一字。',
+            },
+            {
+                title: '古诗变体',
+                body: '今日一句：每天一首短诗。盲翻局：场上不露字（通关第 3 关解锁）。均不推进主线。',
+            },
+            {
+                title: '散页匣',
+                body: '匣格有限。三消靠自动消除腾空；古诗匣满且点不亮下一字时失败。',
+            },
+            {
+                title: '道具',
+                body: '撤回 / 提示 / 整理匣。免费次数用完可看短视频补给。',
+            },
+            {
+                title: '广告续关',
+                body: '匣满了可看短视频清空闲字。无账号、无云存档，进度仅本次打开有效。',
+            },
+        ];
+
+        const innerW = 600;
+        const titleH = 34;
+        const gapSec = 18;
+        const bodyLineH = 30;
+        const pad = 20;
+        const measured = sections.map((s) => {
+            const lines = Math.ceil(s.body.length / 16) + 1;
+            const bodyH = Math.max(64, lines * bodyLineH);
+            return { ...s, bodyH, h: titleH + 10 + bodyH };
+        });
+        const contentH =
+            pad * 2 + measured.reduce((s, x) => s + x.h, 0) + Math.max(0, measured.length - 1) * gapSec;
+
+        const { root: scrollRoot, content } = makeVerticalScroll(board, 'howtoScroll', innerW, viewH - 20, contentH);
+        scrollRoot.setPosition(0, 0, 0);
+
+        let cursor = -pad;
+        measured.forEach((s, i) => {
+            const block = makeNode(`sec${i}`, content, innerW - 20, s.h);
+            block.setPosition(0, cursor - s.h * 0.5, 0);
+            const g = block.addComponent(Graphics);
+            g.fillColor = colorFromHex('#C45C3A', 220);
+            g.roundRect(-(innerW - 20) * 0.5 + 8, s.h * 0.5 - titleH + 6, 4, titleH - 10, 2);
+            g.fill();
+            addLabel(block, 't', s.title, 26, Colors.brown, 520, titleH, true).node.setPosition(
+                12,
+                s.h * 0.5 - titleH * 0.5 - 2,
+                0,
+            );
+            const body = addLabel(block, 'b', s.body, 22, Colors.text, innerW - 72, s.bodyH, false);
+            body.node.setPosition(12, -titleH * 0.5 + 4, 0);
+            body.overflow = Label.Overflow.RESIZE_HEIGHT;
+            body.horizontalAlign = Label.HorizontalAlign.LEFT;
+            body.verticalAlign = Label.VerticalAlign.TOP;
+            body.lineHeight = bodyLineH;
+            cursor -= s.h + gapSec;
+        });
+    }
+
+    /** 二级页顶栏：避开刘海/胶囊，统一返回钮位置 */
+    private placePageHeader(parent: Node, title: string, onBack: () => void, safe?: SafeLayout) {
+        const s = safe ?? getSafeLayout();
+        const btnSize = s.headerBtnSize;
+        const y = s.headerY;
+        addCircleBtn(parent, 'back', '←', btnSize, onBack, this.uiFrames.get('btn_back')).setPosition(-300, y, 0);
+        addLabel(parent, 'title', title, 36, Colors.brown, 400, 50, true).node.setPosition(0, y, 0);
+        return s;
     }
 
     // ---------------- Game ----------------
-    private enterGame(levelId: number) {
+    private enterGame(levelId: number, mode: PlayMode = this.playMode) {
         this.currentLevel = levelId;
+        this.playMode = mode;
         this.clearPage();
         this.page = 'game';
         const p = this.pageRoot;
@@ -1243,43 +1490,46 @@ export class GameApp extends Component {
 
         this.hudLayer = makeNode('hud', p);
 
-        // —— 一屏垂直栈：顶栏 → 诗笺 → 棋盘 → 散页匣 → 道具 ——
-        const visH = this.getVisibleDesignHeight();
-        const half = visH * 0.5;
+        // —— 顶栏仅返回（与胶囊平行）→ 其下诗笺 → 棋盘 → 散页匣 → 道具 ——
+        const safe = getSafeLayout();
         const gap = 8;
-        const bottomPad = 14;
-        const headerBlock = 50;
         const poemH = this.measurePoemHudHeight(verse);
         const trayH = 120;
         const toolH = 68;
         const toolW = 148;
 
-        const capsuleY = this.getWechatCapsuleAlignY();
-        const titleY = Math.min(capsuleY ?? half - 52, half - 44);
-        const btnSize = this.getWechatCapsuleBtnSize(Math.max(52, L?.back?.w ?? 56));
-        const backX = L?.back?.x ?? -(bw * 0.5 - 8);
+        // 返回钮：与右上角胶囊同一水平线，顶栏中间不放任何方框/标题
+        const titleY = safe.headerY;
+        const btnSize = Math.max(48, Math.min(safe.headerBtnSize, L?.back?.w ?? 56));
+        const backX = L?.back?.x ?? -(Design.width * 0.5 - 24 - btnSize * 0.5);
 
-        addCircleBtn(this.hudLayer, 'back', '←', btnSize, () => this.showHome()).setPosition(backX, titleY, 0);
-        addLabel(this.hudLayer, 'title', `第${data.id}关`, 26, Colors.brown, 280, 40, true).node.setPosition(
-            -16,
-            titleY,
-            0,
-        );
+        addCircleBtn(
+            this.hudLayer,
+            'back',
+            '←',
+            btnSize,
+            () => this.showHome(),
+            this.uiFrames.get('btn_back'),
+        ).setPosition(backX, titleY, 0);
+
+        // 经济信息 + 诗笺：整体下移，与胶囊/返回钮拉开间距
         const tier = difficultyTier(data.id);
-        const eco = addLabel(this.hudLayer, 'economy', '', 17, Colors.text, 500, 26, true);
-        eco.node.setPosition(-16, titleY - 30, 0);
+        const metaY = safe.contentTop - 40;
+        const eco = addLabel(this.hudLayer, 'economy', '', 16, Colors.text, 520, 24, true);
+        eco.node.setPosition(0, metaY, 0);
         this.economyHudLabel = eco;
 
-        const toolY = -half + bottomPad + toolH * 0.5;
+        // 道具栏整体抬到底部安全区之上
+        const toolY = safe.contentBottom + 10 + toolH * 0.5;
         const slotY = toolY + toolH * 0.5 + gap + trayH * 0.5;
-        const poemTop = titleY - headerBlock;
+        const poemTop = metaY - 22;
         const poemY = poemTop - poemH * 0.5;
         const boardTop = poemY - poemH * 0.5 - gap;
-        const boardBottom = slotY + trayH * 0.5 + gap;
-        const bh = Math.max(300, boardTop - boardBottom);
+        const boardBottom = slotY + trayH * 0.5 + gap + 20;
+        const bh = Math.max(280, boardTop - boardBottom);
         const boardY = (boardTop + boardBottom) * 0.5;
 
-        this.game.loadLevel(data, bw, bh);
+        this.game.loadLevel(data, bw, bh, this.playMode);
         this.boardLayer = makeNode('board', p, bw, bh);
         this.boardLayer.setPosition(0, boardY, 0);
         this.slotLayer = makeNode('tray', p);
@@ -1291,12 +1541,11 @@ export class GameApp extends Component {
         this.poemRevealed = this.game.poemRevealed;
         this.refreshEconomyHud(tier);
 
-        const frame = addBg(this.boardLayer, 'frame', bw, bh, Colors.panelGame, 22);
-        frame.setSiblingIndex(0);
-        strokeRect(frame.getComponent(Graphics)!, bw, bh, Colors.boardBorder, 2.5, 22);
-        this.disableHit(frame);
-
-        this.buildPoemHud(verse, bw - 28, poemY, poemH);
+        if (isPoemFamily(this.playMode)) {
+            this.buildPoemHud(verse, bw - 28, poemY, poemH);
+        } else {
+            this.buildMatch3Hud(bw - 28, poemY, poemH);
+        }
         this.buildTrayUI(bw + 20, trayH);
         this.spawnTiles();
         this.bindBoardInput();
@@ -1306,7 +1555,34 @@ export class GameApp extends Component {
 
         this.hudLayer.setSiblingIndex(p.children.length - 1);
         const next = this.game.currentTarget();
-        this.tip(next ? `点亮书架：下一字「${next}」` : '理完架上剩余盲盒');
+        const glyphMode = resolveBoardGlyphMode(this.playMode, data.id);
+        if (this.playMode === 'match3') {
+            this.tip('点顶层盲盒进匣 · 三个相同即可消除');
+        } else if (next) {
+            this.tip(
+                this.playMode === 'daily'
+                    ? `今日一句「${verse.title}」· 下一字「${next}」`
+                    : glyphMode === 'blind'
+                      ? `盲翻局 · 场上不露字 · 下一字「${next}」`
+                      : `点带字的顶层盒 · 下一字「${next}」`,
+            );
+        } else {
+            this.tip('理完架上剩余盲盒');
+        }
+    }
+
+    /** 三消顶栏说明（占原诗笺位置） */
+    private buildMatch3Hud(cardW: number, centerY: number, cardH: number) {
+        const card = addBg(this.hudLayer, 'match3Hud', cardW, Math.max(72, cardH * 0.7), Colors.panel, 14);
+        card.setPosition(0, centerY, 0);
+        strokeRect(card.getComponent(Graphics)!, cardW, Math.max(72, cardH * 0.7), Colors.boardBorder, 1.5, 14);
+        addLabel(card, 't', '三消模式', 22, Colors.brown, cardW - 40, 32, true).node.setPosition(0, 12, 0);
+        const prog = addLabel(card, 'p', '凑齐三个相同盲盒消除 · 清空即通关', 16, Colors.text, cardW - 48, 28, true);
+        prog.node.setPosition(0, -14, 0);
+        this.poemHudRoot = card;
+        this.poemHudLabel = prog;
+        this.poemHudProgressLabel = prog;
+        this.poemHudBar = null;
     }
 
     /** 诗笺高度：尽量压扁，保证一屏 */
@@ -1330,68 +1606,93 @@ export class GameApp extends Component {
     }
 
     private bindBoardInput() {
-        // 不再使用全屏 pad 算坐标（易偏移点到旁边）
-        // 改为每个方块自己接收点击；清掉旧 pad
-        const pad = this.boardLayer.getChildByName('inputPad');
-        if (pad) pad.destroy();
-    }
-
-    private bindTileTouch(node: Node, tileId: string) {
-        node.off(Node.EventType.TOUCH_END);
-        const tile = this.game.tiles.find((t) => t.id === tileId);
-        const item = node.getComponent(TileItem);
-        item?.bindRefs();
-        const clickable = !!tile && this.game.isClickable(tile);
-
-        if (!clickable) {
-            // 被压住：不接点击，等上层消完再开放
-            node.off(Node.EventType.TOUCH_END);
-            const bie = node.getComponent(BlockInputEvents);
-            if (bie) bie.destroy();
-            if (item) item.disableRootHit();
-            else {
-                const ut = node.getComponent(UITransform);
-                if (ut) {
-                    ut.setContentSize(0, 0);
-                    (ut as UITransform & { hitTest: () => boolean }).hitTest = () => false;
-                }
-            }
-            // Body 只关命中，保留尺寸以免贴图被压没
-            node.children.forEach((c) => {
-                const cut = c.getComponent(UITransform);
-                if (cut) (cut as UITransform & { hitTest: () => boolean }).hitTest = () => false;
-            });
-            return;
+        // 棋盘置于匣之上，避免底部方块被散页匣挡住点击
+        if (this.slotLayer?.isValid && this.boardLayer?.isValid) {
+            this.boardLayer.setSiblingIndex(Math.max(this.slotLayer.getSiblingIndex() + 1, this.boardLayer.getSiblingIndex()));
         }
-
-        if (item) item.enableRootHit();
-        else {
-            const ut = node.getComponent(UITransform);
-            if (ut) {
-                ut.setContentSize(Design.tileSize, Design.tileSize);
-                delete (ut as UITransform & { hitTest?: unknown }).hitTest;
-            }
+        // 棋盘整体可点：用统一点选，避免等距 AABB 点到旁边/上层块
+        this.boardLayer.off(Node.EventType.TOUCH_END);
+        if (!this.boardLayer.getComponent(BlockInputEvents)) {
+            this.boardLayer.addComponent(BlockInputEvents);
         }
-        // Body 始终不命中
-        const body = node.getChildByName('Body');
-        const but = body?.getComponent(UITransform);
-        if (but) (but as UITransform & { hitTest: () => boolean }).hitTest = () => false;
-
-        if (!node.getComponent(BlockInputEvents)) node.addComponent(BlockInputEvents);
-        node.on(
+        this.boardLayer.on(
             Node.EventType.TOUCH_END,
             (e: EventTouch) => {
                 e.propagationStopped = true;
-                if (this.busy || this.page !== 'game' || this.game.phase !== 'playing') return;
-                const t = this.game.tiles.find((x) => x.id === tileId);
-                if (t && this.game.isClickable(t)) {
-                    void this.onTileClick(t.id);
-                    return;
-                }
-                this.tip('先拿走压在上面的物品');
+                this.handleBoardTap(e);
             },
             this,
         );
+    }
+
+    /** 触摸 UI 坐标 → 棋盘本地坐标 */
+    private uiToBoardLocal(uiLoc: { x: number; y: number }): Vec3 | null {
+        if (!this.nodeAlive(this.boardLayer)) return null;
+        const ut = this.boardLayer.getComponent(UITransform);
+        if (!ut) return null;
+        return ut.convertToNodeSpaceAR(new Vec3(uiLoc.x, uiLoc.y, 0));
+    }
+
+    /**
+     * 点选指尖下顶面。热区贴近盲盒顶面大小；多块重叠时高层优先，其次更靠前。
+     */
+    private pickBoardTileAt(uiLoc: { x: number; y: number }): TileModel | null {
+        const local = this.uiToBoardLocal(uiLoc);
+        if (!local) return null;
+        const bs = this.getBoardScale();
+        const hw = Design.tileSize * bs * 0.46;
+        const hh = Design.tileSize * bs * 0.3;
+        let best: TileModel | null = null;
+        let bestScore = -Infinity;
+        for (const tile of this.game.tiles) {
+            if (tile.removed || tile.inTray) continue;
+            const n = this.tileNodes.get(tile.id);
+            if (!this.nodeAlive(n) || !n.active) continue;
+            const dx = Math.abs(local.x - tile.x);
+            const dy = Math.abs(local.y - tile.y);
+            if (dx / hw + dy / hh > 1.12) continue;
+            // 可见优先：更靠前（col+row 大 / y 小）再比层高
+            const depth = (tile.col ?? 0) + (tile.row ?? 0);
+            const score = depth * 1e6 + tile.layer * 1e3 - tile.y;
+            if (score > bestScore) {
+                bestScore = score;
+                best = tile;
+            }
+        }
+        return best;
+    }
+
+    private handleBoardTap(e: EventTouch) {
+        if (this.busy || this.page !== 'game' || this.game.phase !== 'playing') return;
+        const loc = e.getUILocation();
+        const tile = this.pickBoardTileAt(loc);
+        if (!tile) return;
+        if (this.game.isClickable(tile)) {
+            void this.onTileClick(tile.id);
+            return;
+        }
+        this.tip('先拿走压在上面的物品');
+    }
+
+    /** 场上方块不单独接点击，避免大方块 AABB 互抢；统一由 boardLayer 点选 */
+    private bindTileTouch(node: Node, _tileId: string) {
+        node.off(Node.EventType.TOUCH_END);
+        const bie = node.getComponent(BlockInputEvents);
+        if (bie) bie.destroy();
+        const item = node.getComponent(TileItem);
+        item?.bindRefs();
+        node.children.forEach((c) => {
+            const cut = c.getComponent(UITransform);
+            if (cut) (cut as UITransform & { hitTest: () => boolean }).hitTest = () => false;
+        });
+        if (item) item.disableRootHit();
+        else {
+            const ut = node.getComponent(UITransform);
+            if (ut) {
+                ut.setContentSize(0, 0);
+                (ut as UITransform & { hitTest: () => boolean }).hitTest = () => false;
+            }
+        }
     }
 
     private buildTrayUI(trayW = 660, trayH = 120) {
@@ -1460,9 +1761,7 @@ export class GameApp extends Component {
     }
 
     private spawnTiles() {
-        this.boardLayer.children.slice().forEach((c) => {
-            if (c.name !== 'frame') c.destroy();
-        });
+        this.boardLayer.children.slice().forEach((c) => c.destroy());
         this.tileNodes.clear();
 
         for (const tile of this.game.tiles) {
@@ -1490,9 +1789,16 @@ export class GameApp extends Component {
 
     private refreshTileStates() {
         const boardTiles = this.game.tiles.filter((t) => !t.removed && !t.inTray);
+        // 等距正确绘制：先画后排，再画同深度更高层；绝不能先按 layer 再按 y（会把后排高层盖住前排）
         const ordered = [...boardTiles].sort((a, b) => {
+            const da = (a.col ?? 0) + (a.row ?? 0);
+            const db = (b.col ?? 0) + (b.row ?? 0);
+            if (a.col != null && b.col != null && da !== db) return da - db;
+            if (a.col == null || b.col == null) {
+                // 无网格：y 越大越靠后，先画
+                if (a.y !== b.y) return b.y - a.y;
+            }
             if (a.layer !== b.layer) return a.layer - b.layer;
-            if (a.y !== b.y) return b.y - a.y;
             return a.x - b.x;
         });
 
@@ -1509,10 +1815,38 @@ export class GameApp extends Component {
             const covered = this.game.isCovered(tile);
             this.applyTileSprite(n, tile.type, covered);
             setOpacity(n, covered ? Math.floor(255 * Design.coveredAlpha) : 255);
+            this.syncBoardGlyph(n, tile, covered);
             n.setSiblingIndex(10 + i);
             this.bindTileTouch(n, tile.id);
         });
         if (this.undoBtn) this.undoBtn.setEnabled(this.game.canUndo());
+    }
+
+    /** 场上显字：古诗印刻；三消不显字 */
+    private syncBoardGlyph(n: Node, tile: TileModel, covered: boolean) {
+        const mode = resolveBoardGlyphMode(this.playMode, this.currentLevel);
+        if (covered || mode === 'blind' || mode === 'none') {
+            hideEmbeddedBoardGlyph(n);
+            const body = n.getChildByName('Body');
+            if (body) setOpacity(body, 255);
+            return;
+        }
+        mountEmbeddedBoardGlyph(n, tile.glyph);
+        const body = n.getChildByName('Body');
+        if (body) setOpacity(body, 255);
+    }
+
+    /** 盲翻提示：短暂在单块上翻开汉字 */
+    private flashBoardGlyph(n: Node, glyph: string, ms = 1400) {
+        const shown = mountEmbeddedBoardGlyph(n, glyph, { flash: true });
+        this.scheduleOnce(() => {
+            if (!this.nodeAlive(shown)) return;
+            if (resolveBoardGlyphMode(this.playMode, this.currentLevel) === 'blind') {
+                shown.active = false;
+            } else {
+                this.refreshTileStates();
+            }
+        }, ms / 1000);
     }
 
     private refreshTrayVisuals() {
@@ -1537,19 +1871,21 @@ export class GameApp extends Component {
             this.applyTileSprite(n, tile.type, false);
             setOpacity(n, 255);
             n.name = `tray_${tile.id}`;
-            let gly = n.getChildByName('GlyphLab');
-            if (!gly) {
-                const lab = addLabel(n, 'GlyphLab', tile.glyph, 36, Colors.brown, 80, 48, true);
-                gly = lab.node;
-            } else {
-                const lab = gly.getComponent(Label);
-                if (lab) lab.string = tile.glyph;
-            }
-            gly.setPosition(0, 8, 0);
             const body = n.getChildByName('Body');
             if (body) {
                 body.setPosition(0, 0, 0);
                 body.setScale(1, 1, 1);
+                setOpacity(body, 160);
+            }
+            let gly = n.getChildByName('GlyphLab');
+            if (this.nodeAlive(gly)) gly.destroy();
+            if (this.playMode === 'match3' || !tile.glyph) {
+                hideEmbeddedBoardGlyph(n);
+            } else {
+                // 匣内同样相对顶面菱形摆正
+                const emb = mountEmbeddedBoardGlyph(n, tile.glyph, { fontSize: 26 });
+                emb.setPosition(0, Design.tileSize * 0.08, 0);
+                emb.setScale(emb.scale.x * 0.85, emb.scale.y * 0.85, 1);
             }
             this.bindTrayTouch(n, tile.id);
         });
@@ -1557,7 +1893,28 @@ export class GameApp extends Component {
 
     private bindTrayTouch(node: Node, tileId: string) {
         node.off(Node.EventType.TOUCH_END);
+        const item = node.getComponent(TileItem);
+        if (item) item.enableRootHit();
+        else {
+            const ut = node.getComponent(UITransform);
+            if (ut) {
+                const s = Design.tileSize * 0.9;
+                ut.setContentSize(s, s);
+                delete (ut as UITransform & { hitTest?: unknown }).hitTest;
+            }
+        }
         if (!node.getComponent(BlockInputEvents)) node.addComponent(BlockInputEvents);
+        if (this.playMode === 'match3') {
+            node.on(
+                Node.EventType.TOUCH_END,
+                (e: EventTouch) => {
+                    e.propagationStopped = true;
+                    this.tip('凑齐三个相同会自动消除');
+                },
+                this,
+            );
+            return;
+        }
         node.on(
             Node.EventType.TOUCH_END,
             (e: EventTouch) => {
@@ -1570,6 +1927,10 @@ export class GameApp extends Component {
 
     private async onTrayClick(tileId: string) {
         if (this.busy || this.game.phase !== 'playing') return;
+        if (this.playMode === 'match3') {
+            this.tip('凑齐三个相同会自动消除');
+            return;
+        }
         const tile = this.game.tiles.find((t) => t.id === tileId);
         if (!tile || !this.game.isTrayClickable(tile)) return;
 
@@ -1626,7 +1987,11 @@ export class GameApp extends Component {
 
             const result = this.game.flip(tileId);
             if (!result.ok) {
-                this.tip('散页匣已满');
+                this.tip(
+                    this.playMode === 'match3'
+                        ? '散页匣满了，先整理匣或看视频清空'
+                        : '散页匣满了，先点匣内目标字，或整理匣',
+                );
                 return;
             }
 
@@ -1636,7 +2001,7 @@ export class GameApp extends Component {
 
             if (result.kind === 'light' || result.kind === 'clean') {
                 await this.playGlyphResolve(n, result.glyph || tile.glyph, result.kind === 'light');
-                if (n.isValid) n.destroy();
+                if (this.nodeAlive(n)) n.destroy();
                 this.tileNodes.delete(tileId);
                 this.poemRevealed = this.game.poemRevealed;
                 if (result.kind === 'light' && result.litChar) {
@@ -1644,12 +2009,38 @@ export class GameApp extends Component {
                 }
                 this.refreshTrayVisuals();
                 this.refreshTileStates();
-            } else if (result.kind === 'tray' || result.kind === 'fail') {
+            } else if (result.kind === 'match') {
                 const idx = result.trayIndex ?? 0;
-                await this.flyNodeToTray(n, idx);
+                if (this.nodeAlive(n)) {
+                    const flash = n.getChildByName('flashG');
+                    if (this.nodeAlive(flash)) flash.destroy();
+                    await this.flyNodeToTray(n, idx);
+                }
+                // 消掉的节点销毁
+                for (const id of result.matchedIds || []) {
+                    const mn = this.tileNodes.get(id);
+                    if (mn?.isValid) {
+                        mn.destroy();
+                        this.tileNodes.delete(id);
+                    }
+                }
                 this.refreshTrayVisuals();
                 this.refreshTileStates();
-                this.tip(`「${result.glyph}」暂入散页匣`);
+                this.tip('三个相同，消掉了！');
+            } else if (result.kind === 'tray' || result.kind === 'fail') {
+                const idx = result.trayIndex ?? 0;
+                if (this.nodeAlive(n)) {
+                    const flash = n.getChildByName('flashG');
+                    if (this.nodeAlive(flash)) flash.destroy();
+                    await this.flyNodeToTray(n, idx);
+                }
+                this.refreshTrayVisuals();
+                this.refreshTileStates();
+                if (this.playMode === 'match3') {
+                    this.tip('已放入散页匣');
+                } else {
+                    this.tip(`「${result.glyph}」不是下一字，已暂存到散页匣`);
+                }
             }
 
             this.afterFlipResolve();
@@ -1659,33 +2050,56 @@ export class GameApp extends Component {
     }
 
     private flashGlyphOnTile(n: Node, glyph: string) {
-        const lab = addLabel(n, 'flashG', glyph, 42, Colors.brown, 90, 56, true);
-        lab.node.setPosition(0, 20, 0);
-        const op = lab.node.getComponent(UIOpacity) || lab.node.addComponent(UIOpacity);
+        if (!glyph || this.playMode === 'match3') return;
+        if (!this.nodeAlive(n)) return;
+        const old = n.getChildByName('flashG');
+        if (this.nodeAlive(old)) old.destroy();
+        // 与顶面印字同一套菱形仿射；单独节点，不拆 GlyphEmb
+        const flashRoot = makeNode('flashG', n, 8, 8);
+        flashRoot.setPosition(0, Design.tileSize * 0.22, 0);
+        const faceW = 0.52;
+        const faceH = 0.3;
+        const inset = 0.58;
+        const halfDiagX = Design.tileSize * faceW * inset;
+        const halfDiagY = Design.tileSize * faceH * inset;
+        const side = 48;
+        const diag = side * Math.SQRT2;
+        flashRoot.setScale((2 * halfDiagX) / diag, (2 * halfDiagY) / diag, 1);
+        const rot = makeNode('Rot', flashRoot, side, side);
+        rot.angle = 45;
+        const lab = addLabel(rot, 'Ink', glyph, 30, Colors.highlight, side, side, false);
+        lab.isBold = false;
+        lab.enableOutline = false;
+        lab.cacheMode = Label.CacheMode.NONE;
+        const op = flashRoot.getComponent(UIOpacity) || flashRoot.addComponent(UIOpacity);
         op.opacity = 255;
-        tween(op).to(0.35, { opacity: 0 }).start();
-        this.scheduleOnce(() => {
-            if (lab.node.isValid) lab.node.destroy();
-        }, 0.4);
+        tween(op)
+            .to(0.35, { opacity: 0 })
+            .call(() => {
+                if (flashRoot.isValid) flashRoot.destroy();
+            })
+            .start();
     }
 
     private async playGlyphResolve(n: Node, glyph: string, lit: boolean) {
+        if (!this.nodeAlive(this.overlayRoot) || !this.nodeAlive(n)) return;
         const lab = addLabel(this.overlayRoot, 'flyG', glyph, 48, lit ? Colors.highlight : Colors.brown, 100, 60, true);
+        const flyNode = lab.node;
         const ui = this.overlayRoot.getComponent(UITransform)!;
         const start = ui.convertToNodeSpaceAR(n.worldPosition);
-        lab.node.setPosition(start.x, start.y, 0);
+        flyNode.setPosition(start.x, start.y, 0);
         let end = new Vec3(start.x, start.y + 100, 0);
-        if (lit && this.poemHudRoot?.isValid) {
+        if (lit && this.nodeAlive(this.poemHudRoot)) {
             end = ui.convertToNodeSpaceAR(this.poemHudRoot.worldPosition);
         }
         await this.tweenPromise(
-            tween(lab.node).to(
+            tween(flyNode).to(
                 0.28,
                 { position: new Vec3(end.x, end.y, 0), scale: new Vec3(0.4, 0.4, 1) },
                 { easing: 'quadOut' },
             ),
         );
-        if (lab.node.isValid) lab.node.destroy();
+        if (this.nodeAlive(flyNode)) flyNode.destroy();
     }
 
     private async flyNodeToTray(n: Node, insert: number) {
@@ -1715,12 +2129,13 @@ export class GameApp extends Component {
         this.poemRevealed = this.game.poemRevealed;
         this.refreshPoemHud();
         const verse = getVerseForLevel(this.currentLevel);
-        const fxParent = this.boardLayer || this.overlayRoot;
-        playVerseInkReveal(fxParent, 0, 40, [ch], verse.kind);
+        if (this.nodeAlive(this.boardLayer)) {
+            playVerseInkReveal(this.boardLayer, 0, 40, [ch], verse.kind);
+        }
         flashVerseHud(this.poemHudRoot);
         const next = this.game.currentTarget();
         if (next) this.tip(`已点亮「${ch}」· 下一字「${next}」`);
-        else this.tip('诗文已点亮，理完剩余盲盒即可通关');
+        else this.tip('诗文已点亮！继续点顶层盲盒收走，清空即可通关');
     }
 
     private afterFlipResolve() {
@@ -1735,6 +2150,14 @@ export class GameApp extends Component {
     }
 
     private refreshPoemHud() {
+        if (this.playMode === 'match3') {
+            if (this.poemHudProgressLabel?.isValid) {
+                const left = this.game.remainingBoard().length + this.game.trayCount();
+                this.poemHudProgressLabel.string =
+                    left > 0 ? `剩余 ${left} 个 · 凑齐三个消除` : '正在结算…';
+            }
+            return;
+        }
         this.poemRevealed = this.game.poemRevealed;
         const verse = getVerseForLevel(this.currentLevel);
         const total = Math.max(1, this.poemChars.length);
@@ -1744,8 +2167,16 @@ export class GameApp extends Component {
             this.poemHudLabel.string = formatVerseProgress(verse, this.poemRevealed);
         }
         if (this.poemHudProgressLabel?.isValid) {
-            this.poemHudProgressLabel.string =
-                got >= total ? '已点亮全文' : next ? `下一字 ${next}` : `点亮 ${got}/${total}`;
+            const boardLeft = this.game.remainingBoard().length;
+            const trayLeft = this.game.trayCount();
+            if (got >= total) {
+                this.poemHudProgressLabel.string =
+                    boardLeft + trayLeft > 0 ? '点走剩余盲盒通关' : '正在结算…';
+            } else if (next) {
+                this.poemHudProgressLabel.string = `下一字 ${next}`;
+            } else {
+                this.poemHudProgressLabel.string = `点亮 ${got}/${total}`;
+            }
             this.poemHudProgressLabel.color = colorFromHex(got >= total ? Colors.highlight : Colors.text);
         }
         if (this.poemHudBar?.isValid) {
@@ -1766,52 +2197,39 @@ export class GameApp extends Component {
     }
 
     /**
-     * 文藏笺：挂在 HUD（棋盘框上方）
-     * 只承载文种 / 题名出处 / 点亮正文 / 进度，不再与顶栏重复「第N关」
+     * 文藏笺：胶囊下方，无大底板方框（仅文字 + 细进度条）
      */
     private buildPoemHud(verse: Verse, cardW: number, centerY: number, cardH: number) {
         const lineCount = Math.min(4, Math.max(1, verse.lines.length));
         const lineH = 20;
-        const padY = 8;
-        const headH = 30;
+        const padY = 6;
+        const headH = 26;
         const bodyH = lineCount * lineH + 2;
 
-        const card = addBg(this.hudLayer, 'poemHud', cardW, cardH, '#FFFCF6', 14);
+        // 透明容器，不再画白底圆角方框
+        const card = makeNode('poemHud', this.hudLayer, cardW, cardH);
         card.setPosition(0, centerY, 0);
-        strokeRect(card.getComponent(Graphics)!, cardW, cardH, '#DCCBB0', 1.5, 14);
         this.disableHit(card);
         this.poemHudRoot = card;
 
-        const accent = makeNode('accent', card, 5, cardH - 16);
-        accent.setPosition(-cardW * 0.5 + 12, 0, 0);
-        const ag = accent.addComponent(Graphics);
-        const accentHex = verse.kind === 'poem' ? '#C45C4A' : verse.kind === 'prose' ? '#8B3A2B' : Colors.highlight;
-        ag.fillColor = colorFromHex(accentHex, 210);
-        ag.roundRect(-2.5, -(cardH - 16) * 0.5, 5, cardH - 16, 2.5);
-        ag.fill();
-
         const top = cardH * 0.5 - padY;
         const kind = verseKindLabel(verse.kind);
-        const badgeW = kind.length >= 3 ? 90 : 60;
-        const badge = addBg(card, 'badge', badgeW, 22, '#FFF1E0', 11);
-        badge.setPosition(-cardW * 0.5 + 26 + badgeW * 0.5, top - 11, 0);
-        strokeRect(badge.getComponent(Graphics)!, badgeW, 22, '#E8C9A8', 1, 11);
-        addLabel(badge, 't', kind, 14, Colors.highlight, badgeW - 6, 20, true).node.setPosition(0, 0, 0);
+        const accentHex = verse.kind === 'poem' ? '#C45C4A' : verse.kind === 'prose' ? '#8B3A2B' : Colors.highlight;
 
-        // 题名 + 出处同一行，居中偏右，避免与顶栏关卡号重复堆叠
+        addLabel(card, 'kind', kind, 14, accentHex, 72, 22, true).node.setPosition(-cardW * 0.5 + 40, top - 10, 0);
         addLabel(
             card,
             'title',
             `${verse.title}　${verse.source}·${verse.author}`,
             17,
             Colors.brown,
-            cardW - badgeW - 150,
+            cardW - 200,
             24,
             true,
-        ).node.setPosition(12, top - 11, 0);
+        ).node.setPosition(10, top - 10, 0);
 
-        this.poemHudProgressLabel = addLabel(card, 'prog', '', 14, Colors.text, 110, 20, true);
-        this.poemHudProgressLabel.node.setPosition(cardW * 0.5 - 60, top - 11, 0);
+        this.poemHudProgressLabel = addLabel(card, 'prog', '', 14, Colors.text, 120, 20, true);
+        this.poemHudProgressLabel.node.setPosition(cardW * 0.5 - 64, top - 10, 0);
 
         const bodyTop = top - headH;
         this.poemHudLabel = addLabel(
@@ -1820,16 +2238,16 @@ export class GameApp extends Component {
             formatVerseProgress(verse, 0),
             18,
             Colors.brown,
-            cardW - 44,
+            cardW - 24,
             bodyH,
             true,
         );
-        this.poemHudLabel.node.setPosition(4, bodyTop - bodyH * 0.5, 0);
+        this.poemHudLabel.node.setPosition(0, bodyTop - bodyH * 0.5, 0);
         this.poemHudLabel.overflow = Label.Overflow.SHRINK;
         this.poemHudLabel.lineHeight = lineH;
 
         const barNode = makeNode('bar', card, 180, 8);
-        barNode.setPosition(0, -cardH * 0.5 + padY + 5, 0);
+        barNode.setPosition(0, -cardH * 0.5 + padY + 4, 0);
         this.poemHudBar = barNode.addComponent(Graphics);
         this.refreshPoemHud();
     }
@@ -1845,7 +2263,14 @@ export class GameApp extends Component {
         const g = this.game;
         const min = g.minAdsRequired;
         const minPart = min > 0 ? ` · 通关需广告≥${min}` : '';
-        this.economyHudLabel.string = `难度${tier}  ·  免费道具 ${g.freePropsLeft}  ·  广告 ${g.adUsed}/${g.adQuota}${minPart}`;
+        const mode = playModeTitle(this.playMode);
+        const head =
+            this.playMode === 'daily'
+                ? `${mode}`
+                : this.playMode === 'blind'
+                  ? `${mode} · 第${this.currentLevel}关`
+                  : `第${this.currentLevel}关 · 难度${tier}`;
+        this.economyHudLabel.string = `${head} · 免费道具 ${g.freePropsLeft} · 广告 ${g.adUsed}/${g.adQuota}${minPart}`;
     }
 
     private onTool(key: string) {
@@ -1907,11 +2332,11 @@ export class GameApp extends Component {
         const mask = fadeMask(this.overlayRoot, true);
         const panel = addBg(this.overlayRoot, 'prop', 560, 320, Colors.panel, 16);
         popupSlideUp(panel, -360);
-        addLabel(panel, 't', '获取道具', 32, Colors.title, 500, 50, true).node.setPosition(0, 100, 0);
+        addLabel(panel, 't', `需要「${propName}」`, 32, Colors.title, 500, 50, true).node.setPosition(0, 100, 0);
         addLabel(
             panel,
             'd',
-            `观看广告可获得 1 次【${propName}】\n本局广告 ${this.game.adUsed}/${this.game.adQuota}`,
+            `看一段短视频，本局获得 1 次「${propName}」\n还可看 ${this.game.adsLeft()} 次`,
             22,
             Colors.text,
             500,
@@ -1927,20 +2352,20 @@ export class GameApp extends Component {
         addButton(
             panel,
             'ad',
-            '观看广告',
-            200,
+            '看视频领取',
+            220,
             72,
-            '#F5F0E6',
+            Colors.btnAd,
             () => {
                 if (!this.game.canUseAd()) {
-                    this.tip('本局广告次数已达上限');
+                    this.tip('本局广告已用完');
                     close();
                     return;
                 }
                 close();
                 this.simulateAd(() => {
                     if (!this.game.spendAd()) {
-                        this.tip('本局广告次数已达上限');
+                        this.tip('本局广告已用完');
                         return;
                     }
                     this.game.usedProp = true;
@@ -1997,30 +2422,31 @@ export class GameApp extends Component {
         }
         this.poemRevealed = this.game.poemRevealed;
         this.refreshPoemHud();
-        this.refreshTrayVisuals();
-        let n = this.tileNodes.get(tile.id);
-        if (!tile.removed) {
+        // 复活被消掉/销毁的节点（含三消 matchedIds）
+        for (const t of this.game.tiles) {
+            if (t.removed) continue;
+            let n = this.tileNodes.get(t.id);
             if (!n || !n.isValid) {
-                n = this.createTileNode(tile);
-                this.tileNodes.set(tile.id, n);
+                n = this.createTileNode(t);
+                this.tileNodes.set(t.id, n);
             }
-            if (!tile.inTray) {
+            if (!t.inTray) {
                 n.parent = this.boardLayer;
                 n.active = true;
                 const bs = this.getBoardScale();
                 n.setScale(bs, bs, 1);
-                n.setPosition(tile.x, tile.y, 0);
+                n.setPosition(t.x, t.y, 0);
             }
         }
-        this.refreshTileStates();
         this.refreshTrayVisuals();
+        this.refreshTileStates();
         this.tip('已撤回上一步');
     }
 
     private doHint() {
         const id = this.game.hintTargetId();
         if (!id) {
-            this.tip('没有可提示的目标字');
+            this.tip(this.playMode === 'match3' ? '没有可提示的盲盒' : '没有可提示的目标字');
             return;
         }
         const tile = this.game.tiles.find((t) => t.id === id);
@@ -2034,15 +2460,24 @@ export class GameApp extends Component {
                 .union()
                 .repeat(2)
                 .start();
+            if (tile && !tile.inTray && resolveBoardGlyphMode(this.playMode, this.currentLevel) === 'blind') {
+                this.flashBoardGlyph(n, tile.glyph);
+            }
         }
-        this.tip(tile ? `目标「${tile.glyph}」在这里` : '已高亮目标');
+        this.tip(
+            this.playMode === 'match3'
+                ? '试试点这个盲盒'
+                : tile
+                  ? `目标「${tile.glyph}」在这里`
+                  : '已高亮目标',
+        );
         this.usedPropMark();
     }
 
     private doTidy() {
         const moved = this.game.clearTrayJunk(2);
         if (!moved.length) {
-            this.tip('匣内没有可整理的闲字');
+            this.tip(this.playMode === 'match3' ? '匣内暂无可整理的盲盒' : '匣内没有可整理的闲字');
             return;
         }
         moved.forEach((t) => {
@@ -2054,7 +2489,11 @@ export class GameApp extends Component {
         });
         this.refreshTrayVisuals();
         this.refreshTileStates();
-        this.tip(`已整理掉 ${moved.length} 个闲字`);
+        this.tip(
+            this.playMode === 'match3'
+                ? `已整理掉 ${moved.length} 个盲盒`
+                : `已整理掉 ${moved.length} 个闲字`,
+        );
         this.afterFlipResolve();
     }
 
@@ -2066,39 +2505,57 @@ export class GameApp extends Component {
         const mask = fadeMask(this.overlayRoot, true);
         const panel = addBg(this.overlayRoot, 'fail', 600, 420, Colors.panel, 16);
         popupSlideUp(panel, -420);
-        addLabel(panel, 't', '散页匣满啦！', 34, Colors.title, 560, 50, true).node.setPosition(0, 140, 0);
+        const canAd = this.game.canUseAd();
+        const left = this.game.adsLeft();
+        addLabel(panel, 't', '散页匣满了', 34, Colors.title, 560, 50, true).node.setPosition(0, 148, 0);
         addLabel(
             panel,
             'd',
-            `看广告可清空散页匣继续点亮\n广告 ${this.game.adUsed}/${this.game.adQuota}`,
+            this.playMode === 'match3'
+                ? canAd
+                    ? '看一段短视频，清空散页匣\n就能继续三消'
+                    : '本局广告已用完\n可以重开本关，或先回首页歇歇'
+                : canAd
+                  ? '看一段短视频，清空匣内闲字\n就能接着点亮诗文'
+                  : '本局广告已用完\n可以重开本关，或先回首页歇歇',
             22,
             Colors.text,
             560,
-            60,
+            70,
             true,
-        ).node.setPosition(0, 70, 0);
+        ).node.setPosition(0, 72, 0);
+        addLabel(
+            panel,
+            'ad',
+            canAd ? `本局还可看 ${left} 次` : `本局广告 ${this.game.adUsed}/${this.game.adQuota}`,
+            18,
+            Colors.text,
+            400,
+            28,
+            true,
+        ).node.setPosition(0, 18, 0);
 
         const closeOverlay = () => {
-            if (mask.isValid) mask.destroy();
-            if (panel.isValid) panel.destroy();
+            if (this.nodeAlive(mask)) mask.destroy();
+            if (this.nodeAlive(panel)) panel.destroy();
         };
 
         addButton(
             panel,
             'revive',
-            this.game.canUseAd() ? '看广告清空匣继续' : '广告次数已用完',
+            canAd ? '看视频 · 清空继续' : '今日次数已用完',
             420,
-            80,
-            this.game.canUseAd() ? Colors.btnAd : Colors.btnDisabled,
+            76,
+            canAd ? Colors.btnAd : Colors.btnDisabled,
             () => {
                 if (!this.game.canUseAd()) {
-                    this.tip('本局广告次数已达上限');
+                    this.tip('本局广告已用完');
                     return;
                 }
                 closeOverlay();
                 this.simulateAd(() => {
                     if (!this.game.spendAd()) {
-                        this.tip('本局广告次数已达上限');
+                        this.tip('本局广告已用完');
                         return;
                     }
                     // 清掉匣内节点
@@ -2114,21 +2571,25 @@ export class GameApp extends Component {
                     this.refreshEconomyHud();
                     this.refreshTrayVisuals();
                     this.refreshTileStates();
-                    this.tip('散页匣已清空，继续点亮');
+                    this.tip(this.playMode === 'match3' ? '匣已清空，继续三消' : '匣已清空，继续点亮');
                 });
             },
-            { textHex: Colors.brown, disabled: !this.game.canUseAd() },
-        ).node.setPosition(0, -10, 0);
+            { textHex: Colors.brown, disabled: !canAd, fontSize: 28 },
+        ).node.setPosition(0, -55, 0);
 
-        addButton(panel, 'retry', '重新开始本关', 200, 64, Colors.btnMain, () => {
+        addButton(panel, 'retry', '重开本关', 200, 64, Colors.btnMain, () => {
             closeOverlay();
-            this.enterGame(this.currentLevel);
-        }, { fontSize: 24, textHex: Colors.brown }).node.setPosition(-120, -100, 0);
+            this.enterGame(this.currentLevel, this.playMode);
+            if (this.playMode === 'daily') {
+                this.game.freePropsLeft += 1;
+                this.refreshEconomyHud();
+            }
+        }, { fontSize: 24, textHex: Colors.brown }).node.setPosition(-120, -145, 0);
 
-        addButton(panel, 'home', '返回首页', 200, 64, Colors.btnShare, () => {
+        addButton(panel, 'home', '回首页', 200, 64, Colors.btnShare, () => {
             closeOverlay();
             this.showHome();
-        }, { fontSize: 24, textHex: Colors.brown }).node.setPosition(120, -100, 0);
+        }, { fontSize: 24, textHex: Colors.brown }).node.setPosition(120, -145, 0);
     }
 
     private showWin() {
@@ -2146,11 +2607,11 @@ export class GameApp extends Component {
         const panel = addBg(this.overlayRoot, 'adGate', 560, 360, Colors.panel, 18);
         popupScaleIn(panel);
         strokeRect(panel.getComponent(Graphics)!, 560, 360, Colors.boardBorder, 2, 18);
-        addLabel(panel, 't', '通关补给', 34, Colors.brown, 480, 48, true).node.setPosition(0, 110, 0);
+        addLabel(panel, 't', '再看一小段', 34, Colors.brown, 480, 48, true).node.setPosition(0, 110, 0);
         addLabel(
             panel,
             'd',
-            `本关难度较高，领取奖励前需观看 ${need} 次广告\n（本局已看 ${this.game.adUsed}/${this.game.adQuota}，通关要求 ≥${this.game.minAdsRequired}）`,
+            `诗文已点亮！领奖前再看 ${need} 段短视频\n本局 ${this.game.adUsed}/${this.game.adQuota}，还需 ${need} 次`,
             22,
             Colors.text,
             500,
@@ -2160,7 +2621,7 @@ export class GameApp extends Component {
         addButton(
             panel,
             'go',
-            `观看 ${need} 次广告并领奖`,
+            `看完领奖（${need}）`,
             360,
             76,
             Colors.btnAd,
@@ -2182,13 +2643,72 @@ export class GameApp extends Component {
         let newItems: string[] = [];
         if (this.leisureMode) {
             SaveData.onLeisureClear(this.currentLevel, stars);
-            this.tip('休闲通关：主线进度不变');
+            if (this.playMode === 'daily') this.tip('今日一句已点亮');
+            else if (this.playMode === 'blind') this.tip('盲翻通关：主线进度不变');
+            else if (this.playMode === 'match3') this.tip('三消通关：主线进度不变');
+            else this.tip('休闲通关：主线进度不变');
             this.leisureMode = false;
         } else {
             newItems = ITEMS.filter((it) => it.unlockLevel === this.currentLevel).map((i) => i.id);
             SaveData.onClear(this.currentLevel, stars, newItems);
         }
+        if (this.playMode === 'match3') {
+            this.showMatch3Win(stars, newItems);
+            return;
+        }
         this.showPoemRecital(verse, stars, newItems);
+    }
+
+    /** 三消通关结算（不走朗诗） */
+    private showMatch3Win(stars: number, newItems: string[]) {
+        const mask = fadeMask(this.overlayRoot, true);
+        const panel = addBg(this.overlayRoot, 'm3win', 600, 420, Colors.panel, 18);
+        popupScaleIn(panel);
+        strokeRect(panel.getComponent(Graphics)!, 600, 420, Colors.boardBorder, 2, 18);
+        addLabel(panel, 'done', '三消通关', 28, Colors.highlight, 520, 40, true).node.setPosition(0, 140, 0);
+        addLabel(panel, 'sub', '相同盲盒凑齐三个，架上已清空', 20, Colors.text, 520, 36, true).node.setPosition(
+            0,
+            90,
+            0,
+        );
+        const starStr = '★'.repeat(Math.max(1, stars)) + '☆'.repeat(Math.max(0, 3 - stars));
+        addLabel(panel, 'stars', starStr, 36, Colors.star, 400, 48, true).node.setPosition(0, 30, 0);
+        if (newItems.length) {
+            addLabel(
+                panel,
+                'unlock',
+                `本关盲盒：${newItems.map((id) => ITEM_MAP[id]?.name || id).join('、')}`,
+                18,
+                Colors.highlight,
+                520,
+                32,
+                true,
+            ).node.setPosition(0, -20, 0);
+        }
+        const nextId = this.currentLevel + 1;
+        // 三消为休闲模式，不卡主线解锁
+        const hasNext = nextId <= Design.totalLevels;
+        const close = () => {
+            if (this.nodeAlive(mask)) mask.destroy();
+            if (this.nodeAlive(panel)) panel.destroy();
+        };
+        addButton(
+            panel,
+            'next',
+            hasNext ? '下一关' : '返回首页',
+            280,
+            72,
+            Colors.btnAd,
+            () => {
+                close();
+                if (hasNext) {
+                    this.leisureMode = true;
+                    this.playMode = 'match3';
+                    this.enterGame(nextId, 'match3');
+                } else this.showHome();
+            },
+            { textHex: Colors.brown },
+        ).node.setPosition(0, -120, 0);
     }
 
     /** 通关朗诵：逐句显现 + 系统语音（若环境支持） */
@@ -2298,22 +2818,36 @@ export class GameApp extends Component {
 
         y -= gapBeforeNext;
         const nextId = this.currentLevel + 1;
-        const hasNext = nextId <= Design.totalLevels && SaveData.isUnlocked(nextId);
+        const sideMode = this.playMode === 'daily' || this.playMode === 'blind';
+        const hasNext = !sideMode && nextId <= Design.totalLevels && SaveData.isUnlocked(nextId);
         const closeRecital = () => {
             this.stopPoemSpeech();
-            if (mask.isValid) mask.destroy();
-            if (panel.isValid) panel.destroy();
+            if (this.nodeAlive(mask)) mask.destroy();
+            if (this.nodeAlive(panel)) panel.destroy();
         };
 
         const actions = makeNode('actions', panel, 560, nextBtnH);
         actions.setPosition(0, y - nextBtnH * 0.5, 0);
         actions.active = false;
 
-        addButton(actions, 'next', hasNext ? '下一关' : '返回首页', 280, 72, Colors.btnAd, () => {
+        const nextLabel = sideMode
+            ? this.playMode === 'daily'
+                ? '再背今日'
+                : '再盲翻一局'
+            : hasNext
+              ? '下一关'
+              : '返回首页';
+
+        addButton(actions, 'next', nextLabel, 280, 72, Colors.btnAd, () => {
             closeRecital();
-            if (hasNext) {
+            if (this.playMode === 'daily') {
+                this.startPlayMode('daily', dailyLevelId());
+            } else if (this.playMode === 'blind') {
+                this.startPlayMode('blind', this.currentLevel);
+            } else if (hasNext) {
                 this.leisureMode = false;
-                this.enterGame(nextId);
+                this.playMode = 'poem';
+                this.enterGame(nextId, 'poem');
             } else this.showHome();
         }, { textHex: Colors.brown }).node.setPosition(0, 0, 0);
 
@@ -2324,10 +2858,10 @@ export class GameApp extends Component {
         skip.node.addComponent(BlockInputEvents);
 
         const revealActions = () => {
-            if (!hint.node.isValid) return;
+            if (!hint.isValid || !this.nodeAlive(hint.node)) return;
             hint.string = '朗诵完毕';
-            skip.node.active = false;
-            if (unlockLab?.node.isValid) unlockLab.node.active = true;
+            if (this.nodeAlive(skip.node)) skip.node.active = false;
+            if (unlockLab?.isValid && this.nodeAlive(unlockLab.node)) unlockLab.node.active = true;
             actions.active = true;
             popupScaleIn(actions);
         };
@@ -2345,8 +2879,8 @@ export class GameApp extends Component {
         const gap = 1.15;
         lineNodes.forEach((lab, i) => {
             this.scheduleOnce(() => {
-                if (!lab.node.isValid) return;
-                const op = lab.node.getComponent(UIOpacity)!;
+                if (!lab.isValid || !this.nodeAlive(lab.node)) return;
+                const op = lab.node.getComponent(UIOpacity) || lab.node.addComponent(UIOpacity);
                 tween(op).to(0.35, { opacity: 255 }).start();
                 tween(lab.node)
                     .to(0.2, { scale: new Vec3(1.06, 1.06, 1) }, { easing: 'backOut' })
@@ -2354,6 +2888,7 @@ export class GameApp extends Component {
                     .start();
                 playLineBrush(panel, 0, lab.node.position.y);
                 lineNodes.forEach((other, j) => {
+                    if (!other.isValid) return;
                     other.color = colorFromHex(j === i ? Colors.brown : '#A89880');
                 });
             }, 0.35 + i * gap);

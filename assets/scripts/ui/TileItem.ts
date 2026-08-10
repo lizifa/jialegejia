@@ -134,8 +134,9 @@ export class TileItem extends Component {
     enableRootHit() {
         const ut = this.node.getComponent(UITransform);
         if (!ut) return;
-        // 恢复可点区域（勿依赖 hitTest 覆盖，3.x 上不可靠）
-        ut.setContentSize(Design.tileSize, Design.tileSize);
+        // 略缩小，减轻等距堆叠时大方块互挡
+        const s = Design.tileSize * 0.82;
+        ut.setContentSize(s, s);
         delete (ut as UITransform & { hitTest?: unknown }).hitTest;
     }
 

@@ -1,8 +1,10 @@
 import {
+    PlayMode,
     adQuotaForLevel,
     Design,
     freePropQuotaForLevel,
     isoCell,
+    isPoemFamily,
     minAdsForLevel,
     traySizeForLevel,
 } from './Config';
@@ -42,7 +44,7 @@ export interface LevelJson {
 
 export type GamePhase = 'playing' | 'won' | 'failed';
 
-export type FlipKind = 'light' | 'tray' | 'clean' | 'fail';
+export type FlipKind = 'light' | 'tray' | 'clean' | 'fail' | 'match';
 
 export interface FlipResult {
     ok: boolean;
@@ -51,22 +53,23 @@ export interface FlipResult {
     trayIndex?: number;
     litChar?: string;
     targetIndex?: number;
+    /** 三消：本步消掉的 tile id */
+    matchedIds?: string[];
 }
 
 interface HistoryEntry {
     tileId: string;
-    action: 'light' | 'tray' | 'clean' | 'trayLight';
+    action: 'light' | 'tray' | 'clean' | 'trayLight' | 'match';
     targetIndexBefore: number;
     traySnapshot: string[];
+    /** 三消消除时一并移除的 id */
+    matchedIds?: string[];
 }
 
 /**
- * 点亮书架（原创）：
- * - 仅顶层可点
- * - 翻开字：对上诗句下一字 → 点亮；否则进散页匣
- * - 诗已全亮后翻开剩余块 → 直接理走（clean）
- * - 匣满且无法从匣点亮下一字 → 失败
- * - 诗全亮且场/匣皆空 → 通关
+ * 点亮书架 / 三消：
+ * - poem：按诗句点亮
+ * - match3：匣内相同类型凑 3 个消除
  */
 export class MatchGame {
     tiles: TileModel[] = [];
@@ -87,9 +90,11 @@ export class MatchGame {
     minAdsRequired = 0;
     usedProp = false;
     boardScale = 1;
+    /** 当前规则形式 */
+    playMode: PlayMode = 'poem';
 
-    private coverX = Design.tileSize * 0.72;
-    private coverY = Design.tileSize * 0.72;
+    private coverX = Design.tileStepX * 0.5;
+    private coverY = Math.max(Design.tileStepY * 0.85, Design.tileLayerLift * 0.45);
     private tileW = Design.tileSize;
     private tileH = Design.tileSize;
 
@@ -103,14 +108,20 @@ export class MatchGame {
         return this.targetChars[this.targetIndex];
     }
 
-    loadLevel(data: LevelJson, boardW = Design.boardW, boardH = Design.boardH): void {
+    loadLevel(
+        data: LevelJson,
+        boardW = Design.boardW,
+        boardH = Design.boardH,
+        mode: PlayMode = 'poem',
+    ): void {
+        this.playMode = mode;
         this.levelId = data.id;
         this.title = data.title;
         this.boardScale = 1;
         this.traySize = traySizeForLevel(data.id);
 
         const verse = getVerseForLevel(data.id);
-        let targets = verseCharSequence(verse);
+        let targets = isPoemFamily(mode) ? verseCharSequence(verse) : [];
 
         const raw = data.tiles.map((t, i) => {
             let x = t.x ?? 0;
@@ -164,15 +175,20 @@ export class MatchGame {
             }
             this.tileW = Design.tileSize * fit;
             this.tileH = Design.tileSize * fit;
-            this.coverX = this.tileW * 0.72;
-            this.coverY = this.tileH * 0.72;
+            this.coverX = Design.tileStepX * fit * 0.5;
+            this.coverY = Math.max(Design.tileStepY * fit * 0.85, Design.tileLayerLift * fit * 0.45);
         }
 
-        if (targets.length > raw.length) {
-            targets = targets.slice(0, Math.max(1, raw.length));
+        if (mode === 'match3') {
+            this.ensureMatch3Triples(raw);
+            this.targetChars = [];
+        } else {
+            if (targets.length > raw.length) {
+                targets = targets.slice(0, Math.max(1, raw.length));
+            }
+            this.targetChars = targets;
+            this.assignGlyphs(raw, targets, data.id);
         }
-        this.targetChars = targets;
-        this.assignGlyphs(raw, targets, data.id);
 
         this.tiles = raw;
         this.tray = Array(this.traySize).fill(null);
@@ -183,8 +199,38 @@ export class MatchGame {
         this.adUsed = 0;
         this.adQuota = adQuotaForLevel(data.id);
         this.freePropsLeft = freePropQuotaForLevel(data.id);
-        this.minAdsRequired = minAdsForLevel(data.id);
+        this.minAdsRequired = mode === 'match3' ? 0 : minAdsForLevel(data.id);
         this.usedProp = false;
+    }
+
+    /** 三消：保证可消数量为 3 的倍数；余数块直接移出（避免残局无解） */
+    private ensureMatch3Triples(tiles: TileModel[]): void {
+        if (!tiles.length) return;
+        const types = [...new Set(tiles.map((t) => t.type))];
+        if (!types.length) return;
+        const rem = tiles.length % 3;
+        if (rem) {
+            for (let i = 0; i < rem; i++) {
+                const t = tiles[tiles.length - 1 - i];
+                t.removed = true;
+                t.glyph = '';
+            }
+        }
+        const work = tiles.filter((t) => !t.removed);
+        const groups = work.length / 3;
+        const pool: string[] = [];
+        for (let i = 0; i < groups; i++) {
+            const ty = types[i % types.length];
+            pool.push(ty, ty, ty);
+        }
+        for (let i = pool.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [pool[i], pool[j]] = [pool[j], pool[i]];
+        }
+        work.forEach((t, i) => {
+            t.type = pool[i];
+            t.glyph = '';
+        });
     }
 
     /** 注入目标字 + 干扰字 */
@@ -192,22 +238,38 @@ export class MatchGame {
         const n = tiles.length;
         if (!n) return;
         const glyphs: string[] = new Array(n);
-        const indices = tiles.map((_, i) => i);
-        for (let i = indices.length - 1; i > 0; i--) {
+        const depthOf = (i: number) => {
+            const t = tiles[i];
+            let d = 0;
+            for (const o of tiles) {
+                if (o === t) continue;
+                if (o.layer <= t.layer) continue;
+                if (t.col != null && t.row != null && o.col === t.col && o.row === t.row) {
+                    d++;
+                    continue;
+                }
+                if (Math.abs(o.x - t.x) < this.coverX && Math.abs(o.y - t.y) < this.coverY) d++;
+            }
+            return d;
+        };
+        // 目标字优先落在浅层（可点/少遮挡），避免诗句字被埋在最底
+        const order = tiles.map((_, i) => i);
+        for (let i = order.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            [indices[i], indices[j]] = [indices[j], indices[i]];
+            [order[i], order[j]] = [order[j], order[i]];
         }
-        // 先写入目标序列所需的每个字
-        for (let i = 0; i < targets.length; i++) {
-            glyphs[indices[i]] = targets[i];
+        order.sort((a, b) => depthOf(a) - depthOf(b));
+
+        for (let i = 0; i < targets.length && i < n; i++) {
+            glyphs[order[i]] = targets[i];
         }
         const distractors = this.buildDistractorPool(levelId, targets);
         for (let i = targets.length; i < n; i++) {
-            const prefab = tiles[indices[i]].glyph;
+            const prefab = tiles[order[i]].glyph;
             if (prefab) {
-                glyphs[indices[i]] = prefab;
+                glyphs[order[i]] = prefab;
             } else {
-                glyphs[indices[i]] = distractors[Math.floor(Math.random() * distractors.length)] || '书';
+                glyphs[order[i]] = distractors[Math.floor(Math.random() * distractors.length)] || '书';
             }
         }
         // 手工 glyph 优先（关卡 JSON）
@@ -224,7 +286,6 @@ export class MatchGame {
             for (let i = 0; i < n && miss > 0; i++) {
                 const g = glyphs[i];
                 if ((need[g] || 0) < (have[g] || 0) || !need[g]) {
-                    // 可替换的干扰位
                     if ((have[g] || 0) > (need[g] || 0)) {
                         have[g]--;
                         glyphs[i] = ch;
@@ -240,37 +301,40 @@ export class MatchGame {
         this.ensureSolvableGlyphPlacement(tiles, targets);
     }
 
-    /** 尽量让首个目标字落在顶层可点位，避免开局死锁 */
+    /**
+     * 让靠前的目标字尽量落在顶层可点位，避免开局/中盘「下一字」被深埋。
+     * 按目标序列顺序占用顶层；顶层不够则停止。
+     */
     private ensureSolvableGlyphPlacement(tiles: TileModel[], targets: string[]): void {
         if (!tiles.length || !targets.length) return;
-        const first = targets[0];
-        const covered = (tile: TileModel) => {
-            for (const other of tiles) {
-                if (other === tile) continue;
-                if (other.layer <= tile.layer) continue;
-                if (
-                    tile.col != null &&
-                    tile.row != null &&
-                    other.col === tile.col &&
-                    other.row === tile.row
-                ) {
-                    return true;
-                }
-                const dx = Math.abs(other.x - tile.x);
-                const dy = Math.abs(other.y - tile.y);
-                if (dx < this.coverX && dy < this.coverY) return true;
+        const covered = (tile: TileModel) => this.isCoveredAmong(tile, tiles);
+        const reserved = new Set<TileModel>();
+        const uniqueFirst: string[] = [];
+        const seen = new Set<string>();
+        for (const ch of targets) {
+            if (seen.has(ch)) continue;
+            seen.add(ch);
+            uniqueFirst.push(ch);
+        }
+        // 至少保证前若干个不重复目标字在顶层
+        const ensureCount = Math.min(uniqueFirst.length, Math.max(4, Math.ceil(uniqueFirst.length * 0.35)));
+        for (let k = 0; k < ensureCount; k++) {
+            const ch = uniqueFirst[k];
+            const tops = tiles.filter((t) => !covered(t) && !reserved.has(t));
+            if (!tops.length) break;
+            const already = tops.find((t) => t.glyph === ch);
+            if (already) {
+                reserved.add(already);
+                continue;
             }
-            return false;
-        };
-        const top = tiles.filter((t) => !covered(t));
-        if (!top.length) return;
-        if (top.some((t) => t.glyph === first)) return;
-        const donor = tiles.find((t) => t.glyph === first);
-        if (!donor) return;
-        const host = top[0];
-        const tmp = host.glyph;
-        host.glyph = donor.glyph;
-        donor.glyph = tmp;
+            const donor = tiles.find((t) => t.glyph === ch && !reserved.has(t));
+            if (!donor) continue;
+            const host = tops[0];
+            const tmp = host.glyph;
+            host.glyph = donor.glyph;
+            donor.glyph = tmp;
+            reserved.add(host);
+        }
     }
 
     private buildDistractorPool(levelId: number, targets: string[]): string[] {
@@ -326,14 +390,26 @@ export class MatchGame {
         return this.tray.filter(Boolean).length;
     }
 
+    /**
+     * 是否被压住：
+     * - 同格更高层
+     * - 或屏幕投影中心足够近的更高层（等距对角叠影：不同格却几乎画在同一位置）
+     * 阈值小于正交步长，避免把旁边一层误判成压住。
+     */
     isCovered(tile: TileModel): boolean {
         if (tile.removed || tile.inTray) return true;
-        for (const other of this.tiles) {
+        return this.isCoveredAmong(tile, this.tiles);
+    }
+
+    private isCoveredAmong(tile: TileModel, tiles: TileModel[]): boolean {
+        for (const other of tiles) {
             if (other === tile || other.removed || other.inTray) continue;
             if (other.layer <= tile.layer) continue;
             if (
                 tile.col != null &&
                 tile.row != null &&
+                other.col != null &&
+                other.row != null &&
                 other.col === tile.col &&
                 other.row === tile.row
             ) {
@@ -377,12 +453,18 @@ export class MatchGame {
         });
     }
 
-    private pushHistory(tileId: string, action: HistoryEntry['action'], targetBefore: number) {
+    private pushHistory(
+        tileId: string,
+        action: HistoryEntry['action'],
+        targetBefore: number,
+        matchedIds?: string[],
+    ) {
         this.history.push({
             tileId,
             action,
             targetIndexBefore: targetBefore,
             traySnapshot: this.traySnapshot(),
+            matchedIds,
         });
         this.moves++;
     }
@@ -392,6 +474,10 @@ export class MatchGame {
         if (this.phase !== 'playing') return { ok: false };
         const tile = this.tiles.find((t) => t.id === tileId);
         if (!tile || !this.isClickable(tile)) return { ok: false };
+
+        if (this.playMode === 'match3') {
+            return this.flipMatch3(tile);
+        }
 
         const before = this.targetIndex;
         const glyph = tile.glyph;
@@ -410,7 +496,6 @@ export class MatchGame {
             tile.removed = true;
             tile.inTray = false;
             this.targetIndex++;
-            // 链式：匣内若有下一字可继续由 UI 提示，逻辑上不自动消
             this.evaluateEnd();
             return {
                 ok: true,
@@ -421,10 +506,8 @@ export class MatchGame {
             };
         }
 
-        // 进散页匣
         const empty = this.tray.findIndex((t) => !t);
         if (empty < 0) {
-            // 匣满时不可再塞错字；若匣内也点不亮下一字则失败
             this.evaluateEnd();
             return { ok: false, kind: 'fail', glyph };
         }
@@ -438,9 +521,80 @@ export class MatchGame {
         return { ok: true, kind: 'tray', glyph, trayIndex: empty, targetIndex: this.targetIndex };
     }
 
+    /** 三消：进匣后自动消三个相同类型 */
+    private flipMatch3(tile: TileModel): FlipResult {
+        const empty = this.tray.findIndex((t) => !t);
+        if (empty < 0) {
+            this.evaluateEnd();
+            return { ok: false, kind: 'fail', glyph: tile.glyph };
+        }
+        const snapBefore = this.traySnapshot();
+        tile.inTray = true;
+        this.tray[empty] = tile;
+        const matchedIds = this.clearMatch3Groups();
+        this.history.push({
+            tileId: tile.id,
+            action: matchedIds.length ? 'match' : 'tray',
+            targetIndexBefore: 0,
+            traySnapshot: snapBefore,
+            matchedIds: matchedIds.length ? matchedIds : undefined,
+        });
+        this.moves++;
+        this.evaluateEnd();
+        if (this.phase === 'failed') {
+            return {
+                ok: true,
+                kind: 'fail',
+                glyph: tile.glyph,
+                trayIndex: empty,
+                matchedIds,
+            };
+        }
+        return {
+            ok: true,
+            kind: matchedIds.length ? 'match' : 'tray',
+            glyph: tile.glyph,
+            trayIndex: empty,
+            matchedIds,
+        };
+    }
+
+    /** 匣内同一 type 满 3 个则消除，返回被消 id */
+    private clearMatch3Groups(): string[] {
+        const matched: string[] = [];
+        let changed = true;
+        while (changed) {
+            changed = false;
+            const counts = new Map<string, TileModel[]>();
+            for (const t of this.tray) {
+                if (!t || t.removed) continue;
+                const list = counts.get(t.type) || [];
+                list.push(t);
+                counts.set(t.type, list);
+            }
+            for (const [, list] of counts) {
+                if (list.length < 3) continue;
+                const take = list.slice(0, 3);
+                for (const t of take) {
+                    matched.push(t.id);
+                    t.removed = true;
+                    t.inTray = false;
+                    for (let i = 0; i < this.tray.length; i++) {
+                        if (this.tray[i]?.id === t.id) this.tray[i] = null;
+                    }
+                }
+                changed = true;
+            }
+            if (changed) this.compactTray();
+        }
+        return matched;
+    }
+
     /** 从散页匣取字：对则点亮，错则忽略（仍留匣内） */
     pickFromTray(tileId: string): FlipResult {
         if (this.phase !== 'playing') return { ok: false };
+        // 三消：匣内不可点选，靠自动三消
+        if (this.playMode === 'match3') return { ok: false };
         const tile = this.tiles.find((t) => t.id === tileId);
         if (!tile || !this.isTrayClickable(tile)) return { ok: false };
 
@@ -448,7 +602,6 @@ export class MatchGame {
         const glyph = tile.glyph;
 
         if (this.targetIndex >= this.targetChars.length) {
-            // 理架：匣内闲字直接清掉
             this.pushHistory(tileId, 'clean', before);
             this.removeFromTray(tile);
             tile.removed = true;
@@ -504,13 +657,33 @@ export class MatchGame {
             this.phase = 'won';
             return;
         }
-        // 匣满且当前不能从匣点亮 → 失败
+        if (this.playMode === 'match3') {
+            if (this.trayCount() >= this.traySize && !this.trayHasMatch3()) {
+                this.phase = 'failed';
+            }
+            return;
+        }
         if (this.trayCount() >= this.traySize && !this.canLightFromTray()) {
             this.phase = 'failed';
         }
     }
 
+    private trayHasMatch3(): boolean {
+        const counts = new Map<string, number>();
+        for (const t of this.tray) {
+            if (!t || t.removed) continue;
+            counts.set(t.type, (counts.get(t.type) || 0) + 1);
+        }
+        for (const c of counts.values()) {
+            if (c >= 3) return true;
+        }
+        return false;
+    }
+
     private checkWin(): boolean {
+        if (this.playMode === 'match3') {
+            return this.remainingBoard().length === 0 && this.trayCount() === 0;
+        }
         return (
             this.targetIndex >= this.targetChars.length &&
             this.remainingBoard().length === 0 &&
@@ -529,11 +702,18 @@ export class MatchGame {
         if (!tile) return null;
 
         this.targetIndex = entry.targetIndexBefore;
+        if (entry.matchedIds?.length) {
+            for (const id of entry.matchedIds) {
+                const m = this.tiles.find((x) => x.id === id);
+                if (m) {
+                    m.removed = false;
+                }
+            }
+        }
         this.restoreTray(entry.traySnapshot);
 
         if (entry.action === 'light' || entry.action === 'trayLight' || entry.action === 'clean') {
             tile.removed = false;
-            // light 来自场上：不在匣；trayLight/clean 从匣：由 snapshot 决定
             if (entry.action === 'light') {
                 tile.inTray = false;
                 for (let i = 0; i < this.tray.length; i++) {
@@ -541,13 +721,15 @@ export class MatchGame {
                 }
                 this.compactTray();
             }
-        } else if (entry.action === 'tray') {
+        } else if (entry.action === 'tray' || entry.action === 'match') {
             tile.removed = false;
             tile.inTray = false;
             for (let i = 0; i < this.tray.length; i++) {
                 if (this.tray[i]?.id === tile.id) this.tray[i] = null;
             }
             this.compactTray();
+            // match 已在上方复活；再套一次 snapshot 对齐匣
+            this.restoreTray(entry.traySnapshot);
         }
 
         this.phase = 'playing';
@@ -577,20 +759,26 @@ export class MatchGame {
             t.col = coords[i].col;
             t.row = coords[i].row;
         });
+        if (isPoemFamily(this.playMode)) {
+            this.ensureSolvableGlyphPlacement(board, this.targetChars.slice(this.targetIndex));
+        }
         this.usedProp = true;
         this.history = [];
         return true;
     }
 
-    /** 整理匣：清掉匣内非当前目标的闲字（最多 max 个） */
+    /** 整理匣：清掉匣内闲字（最多 max 个）；古诗保留剩余诗句用字 */
     clearTrayJunk(max = 2): TileModel[] {
         if (this.phase !== 'playing') return [];
-        const target = this.currentTarget();
+        const keep =
+            this.playMode === 'match3'
+                ? new Set<string>()
+                : new Set(this.targetChars.slice(this.targetIndex));
         const moved: TileModel[] = [];
         for (let i = this.tray.length - 1; i >= 0 && moved.length < max; i--) {
             const t = this.tray[i];
             if (!t) continue;
-            if (target && t.glyph === target) continue;
+            if (this.playMode !== 'match3' && keep.has(t.glyph)) continue;
             t.removed = true;
             t.inTray = false;
             this.tray[i] = null;
@@ -617,8 +805,19 @@ export class MatchGame {
         this.evaluateEnd();
     }
 
-    /** 提示：返回场上或匣内一个当前目标字的 id */
+    /** 提示：古诗找目标字；三消找可点且有助于成组的类型 */
     hintTargetId(): string | null {
+        if (this.playMode === 'match3') {
+            const trayTypes = new Map<string, number>();
+            for (const t of this.tray) {
+                if (!t || t.removed) continue;
+                trayTypes.set(t.type, (trayTypes.get(t.type) || 0) + 1);
+            }
+            const board = this.remainingBoard().filter((t) => this.isClickable(t));
+            const prefer = board.find((t) => (trayTypes.get(t.type) || 0) > 0);
+            if (prefer) return prefer.id;
+            return board[0]?.id || this.remainingBoard()[0]?.id || null;
+        }
         const t = this.currentTarget();
         if (!t) return null;
         for (const tile of this.tray) {
@@ -627,7 +826,6 @@ export class MatchGame {
         for (const tile of this.remainingBoard()) {
             if (tile.glyph === t && this.isClickable(tile)) return tile.id;
         }
-        // 被压住的也提示位置（仍返回 id，UI 可高亮）
         for (const tile of this.remainingBoard()) {
             if (tile.glyph === t) return tile.id;
         }

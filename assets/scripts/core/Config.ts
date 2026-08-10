@@ -29,6 +29,12 @@ export const Design = {
     width: 720,
     height: 1280,
     radius: 12,
+    /**
+     * 小游戏安全区兜底（设计坐标）
+     * 宿主有 safeArea / 胶囊 API 时以实测为准；编辑器预览用此值模拟刘海+底栏
+     */
+    safeTopFallback: 56,
+    safeBottomFallback: 40,
     /** 散页匣默认格数（点亮书架） */
     traySize: 5,
     /** @deprecated 兼容旧引用，等同 traySize */
@@ -36,7 +42,7 @@ export const Design = {
     /** 棋盘上盲盒尺寸（入匣另算 fitScale） */
     tileSize: 112,
     /** 文档：被遮挡透明度 70% */
-    coveredAlpha: 0.7,
+    coveredAlpha: 0.55,
     /** 入匣默认缩放 */
     slotScale: 0.62,
     /** 默认广告上限（会被关卡动态配额覆盖） */
@@ -47,7 +53,8 @@ export const Design = {
     /** 等距网格 */
     tileStepX: 54,
     tileStepY: 32,
-    tileLayerLift: 36,
+    /** 层间抬升：越大同格叠放越明显，减少「看不出被压住」 */
+    tileLayerLift: 48,
 };
 
 /** 散页匣容量：前期宽裕，后期更紧 */
@@ -103,6 +110,57 @@ export function difficultyTier(levelId: number): number {
     if (levelId <= 18) return 3;
     if (levelId <= 25) return 4;
     return 5;
+}
+
+/**
+ * 首页游戏模式（两大形式）：
+ * - match3：三消（相同类型收进匣，凑齐 3 个消除）
+ * - poem：古诗点亮（按诗句顺序点亮）
+ * - daily / blind：古诗变体（今日一句 / 盲翻）
+ */
+export type PlayMode = 'match3' | 'poem' | 'daily' | 'blind';
+
+/**
+ * 场上显字模式：
+ * - top：顶层可点块露字（新手友好）
+ * - blind：场上全盲，只靠「下一字」+ 匣内已知字 + 提示推理
+ * - none：三消不靠字，只认盲盒种类
+ */
+export type BoardGlyphMode = 'top' | 'blind' | 'none';
+
+export function playModeTitle(mode: PlayMode): string {
+    if (mode === 'match3') return '三消';
+    if (mode === 'daily') return '今日一句';
+    if (mode === 'blind') return '盲翻局';
+    return '古诗';
+}
+
+export function isPoemFamily(mode: PlayMode): boolean {
+    return mode === 'poem' || mode === 'daily' || mode === 'blind';
+}
+
+/** 今日一句：按东八区日期轮换 1–10 关（偏短、好分享） */
+export function dailyLevelId(now = Date.now()): number {
+    const day = Math.floor((now + 8 * 3600 * 1000) / 86400000);
+    return (day % 10) + 1;
+}
+
+/** 盲翻局入口：至少通关过第 3 关后解锁 */
+export function blindModeUnlocked(maxUnlocked: number): boolean {
+    return maxUnlocked >= 3;
+}
+
+export function resolveBoardGlyphMode(mode: PlayMode, levelId: number): BoardGlyphMode {
+    if (mode === 'match3') return 'none';
+    if (mode === 'blind') return 'blind';
+    if (mode === 'daily') return 'top';
+    // 古诗主线：11 关起自动盲翻
+    return levelId >= 11 ? 'blind' : 'top';
+}
+
+/** @deprecated 用 resolveBoardGlyphMode；保留兼容 */
+export function boardGlyphMode(levelId: number): BoardGlyphMode {
+    return resolveBoardGlyphMode('poem', levelId);
 }
 
 export const Anim = {

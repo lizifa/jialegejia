@@ -8,6 +8,8 @@ import {
     Mask,
     Node,
     ScrollView,
+    Sprite,
+    SpriteFrame,
     UIOpacity,
     UITransform,
     Vec3,
@@ -297,32 +299,69 @@ export function addButton(
     };
 }
 
+/**
+ * 返回钮：优先用回转箭头切图（已重着色为奶油底+朱红），无图时矢量兜底
+ */
 export function addCircleBtn(
     parent: Node,
     name: string,
-    glyph: string,
+    _glyph: string,
     size: number,
     onClick: () => void,
+    icon?: SpriteFrame | null,
 ): Node {
     const node = makeNode(name, parent, size, size);
-    const g = node.addComponent(Graphics);
-    // 设计稿：白底圆钮 + 深棕描边
-    g.fillColor = colorFromHex('#FFFFFF');
-    g.circle(0, 0, size / 2 - 1);
-    g.fill();
-    g.strokeColor = colorFromHex(Colors.brown);
-    g.lineWidth = 2.5;
-    g.circle(0, 0, size / 2 - 2);
-    g.stroke();
-    const lab = addLabel(node, 'g', glyph, Math.floor(size * 0.44), Colors.brown, size, size, true);
-    lab.node.setPosition(0, 0, 0);
+
+    if (icon) {
+        const sp = node.addComponent(Sprite);
+        sp.sizeMode = Sprite.SizeMode.CUSTOM;
+        sp.spriteFrame = icon;
+        sp.color = Color.WHITE;
+        node.getComponent(UITransform)!.setContentSize(size, size);
+    } else {
+        const g = node.addComponent(Graphics);
+        const r = size * 0.5 - 1;
+        const lacquer = '#C45C3A';
+        const cream = '#FFF6EE';
+        g.fillColor = colorFromHex(cream);
+        g.roundRect(-r, -r, r * 2, r * 2, r * 0.32);
+        g.fill();
+        g.strokeColor = colorFromHex('#E8C98A', 220);
+        g.lineWidth = 2;
+        g.roundRect(-r + 1, -r + 1, r * 2 - 2, r * 2 - 2, r * 0.28);
+        g.stroke();
+        // 回转箭头矢量兜底
+        const lw = Math.max(3.2, size * 0.085);
+        const cx = size * 0.05;
+        const cy = -size * 0.04;
+        const rr = size * 0.19;
+        g.strokeColor = colorFromHex(Colors.brown);
+        g.lineWidth = lw;
+        g.lineCap = Graphics.LineCap.ROUND;
+        g.lineJoin = Graphics.LineJoin.ROUND;
+        g.moveTo(cx + rr, cy - rr * 0.35);
+        g.lineTo(cx + rr, cy + rr * 0.5);
+        g.arc(cx, cy + rr * 0.5, rr, 0, Math.PI, false);
+        g.stroke();
+        const tipX = cx - rr;
+        const tipY = cy + rr * 0.5;
+        const hs = size * 0.11;
+        g.fillColor = colorFromHex(lacquer);
+        g.moveTo(tipX - hs * 0.15, tipY);
+        g.lineTo(tipX + hs * 0.95, tipY + hs * 0.72);
+        g.lineTo(tipX + hs * 0.95, tipY - hs * 0.72);
+        g.close();
+        g.fill();
+    }
+
     node.addComponent(BlockInputEvents);
     node.on(Node.EventType.TOUCH_START, () => {
-        tween(node).to(Anim.btnMs, { scale: new Vec3(0.92, 0.92, 1) }).start();
+        tween(node).to(Anim.btnMs, { scale: new Vec3(0.9, 0.9, 1) }, { easing: 'quadOut' }).start();
     });
     node.on(Node.EventType.TOUCH_END, () => {
         tween(node)
-            .to(Anim.btnMs, { scale: new Vec3(1, 1, 1) }, { easing: 'backOut' })
+            .to(Anim.btnMs, { scale: new Vec3(1.06, 1.06, 1) }, { easing: 'backOut' })
+            .to(0.08, { scale: new Vec3(1, 1, 1) })
             .call(onClick)
             .start();
     });
@@ -440,6 +479,90 @@ export function burstStars(parent: Node, x: number, y: number): void {
 export function setOpacity(node: Node, a: number): void {
     const op = node.getComponent(UIOpacity) || node.addComponent(UIOpacity);
     op.opacity = a;
+}
+
+/**
+ * 场上盲盒顶面汉字：把正放方框仿射到顶面菱形（相对框摆正）。
+ * 顶面菱形对角线水平/竖直（见 gen_tile_sprites.iso_params），
+ * 故：字先转 45° 成菱形，再按 w:h 压成与盒盖同形。
+ */
+export function mountEmbeddedBoardGlyph(
+    tileNode: Node,
+    glyph: string,
+    opts?: { flash?: boolean; fontSize?: number },
+): Node {
+    const flash = !!opts?.flash;
+    const fontSize = opts?.fontSize ?? 30;
+    // 与贴图一致的顶面半对角线比例（勿用模块顶层 const，避免打包时序问题）
+    const faceW = 0.52;
+    const faceH = 0.3;
+    const inset = 0.58;
+    const halfDiagX = Design.tileSize * faceW * inset;
+    const halfDiagY = Design.tileSize * faceH * inset;
+    // 字号方框边长（旋转 45° 后对角线 = side * √2）
+    const side = Math.max(36, fontSize + 10);
+
+    const legacy = tileNode.getChildByName('GlyphLab');
+    if (legacy?.isValid) legacy.destroy();
+    const old = tileNode.getChildByName('GlyphEmb');
+    if (old?.isValid) old.destroy();
+
+    // GlyphEmb：定位到顶面中心，并按菱形纵横比缩放
+    const root = makeNode('GlyphEmb', tileNode, side, side);
+    const diag = side * Math.SQRT2;
+    root.setScale((2 * halfDiagX) / diag, (2 * halfDiagY) / diag, 1);
+    root.angle = 0;
+    // 顶面中心约在贴图上方（top_z ≈ d*0.55）
+    root.setPosition(0, Design.tileSize * 0.22, 0);
+
+    // Rot：+45° 使方框边与菱形边平行（相对框摆正）
+    const rot = makeNode('Rot', root, side, side);
+    rot.angle = 45;
+    rot.setScale(1, 1, 1);
+    rot.setPosition(0, 0, 0);
+
+    const ink = addLabel(
+        rot,
+        'Ink',
+        glyph,
+        fontSize,
+        flash ? Colors.highlight : '#5C4030',
+        side,
+        side,
+        false,
+    );
+    ink.isBold = false;
+    ink.enableOutline = false;
+    ink.enableShadow = false;
+    ink.overflow = Label.Overflow.SHRINK;
+    ink.horizontalAlign = Label.HorizontalAlign.CENTER;
+    ink.verticalAlign = Label.VerticalAlign.CENTER;
+    ink.lineHeight = fontSize + 2;
+    ink.cacheMode = Label.CacheMode.NONE;
+    ink.node.angle = 0;
+    ink.node.setScale(1, 1, 1);
+    ink.node.setPosition(0, 0, 0);
+    const iut = ink.node.getComponent(UITransform);
+    if (iut) {
+        iut.setContentSize(side, side);
+        (iut as UITransform & { hitTest: () => boolean }).hitTest = () => false;
+    }
+    const rut = rot.getComponent(UITransform);
+    if (rut) (rut as UITransform & { hitTest: () => boolean }).hitTest = () => false;
+    const out = root.getComponent(UITransform);
+    if (out) (out as UITransform & { hitTest: () => boolean }).hitTest = () => false;
+
+    root.setSiblingIndex(tileNode.children.length - 1);
+    root.active = true;
+    setOpacity(root, flash ? 255 : 248);
+    return root;
+}
+
+export function hideEmbeddedBoardGlyph(tileNode: Node): void {
+    const emb = tileNode.getChildByName('GlyphEmb');
+    if (emb?.isValid) emb.active = false;
+    const legacy = tileNode.getChildByName('GlyphLab');
+    if (legacy?.isValid) legacy.active = false;
 }
 
 /** 首页轻漂浮 */
