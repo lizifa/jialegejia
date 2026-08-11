@@ -170,23 +170,20 @@ export function mountHomeFlipBook(
     const autoFlipInterval = opts?.autoFlipInterval ?? 1.8;
     const autoTick = { t: 0 };
 
-    const syncRestStack = () => {
+    const syncRestStack = (opts?: { forcePose?: boolean }) => {
         for (let i = 0; i < pageCount; i++) {
-            if (i < cursor) {
-                // 左栈只露最上一张，避免叠字
-                applyLeafRestPose(leaves[i]!, i === cursor - 1 ? 'left' : 'hidden');
-            } else if (i === cursor) {
-                applyLeafRestPose(leaves[i]!, 'right');
-            } else {
-                applyLeafRestPose(leaves[i]!, 'hidden');
+            // 首页只露右页文案，左页保持空白书页
+            if (i === cursor) applyLeafRestPose(leaves[i]!, 'right', { force: opts?.forcePose });
+            else applyLeafRestPose(leaves[i]!, 'hidden');
+            // 翻页时可能临时挂到 openNode，静置一律收回 leafLayer
+            if (leaves[i]!.root.parent !== leafLayer) {
+                leaves[i]!.root.setParent(leafLayer);
             }
         }
-        // 右页置顶，左页在下
-        if (cursor > 0) leaves[cursor - 1]!.root.setSiblingIndex(0);
         leaves[cursor]!.root.setSiblingIndex(leafLayer.children.length - 1);
     };
 
-    syncRestStack();
+    syncRestStack({ forcePose: true });
 
     const flipOnce = async () => {
         const from = cursor;
@@ -194,45 +191,41 @@ export function mountHomeFlipBook(
         const leaf = leaves[from]!;
         const next = leaves[to]!;
 
-        // 预露下一页作底（最后一页翻完会整栈复位）
-        if (from + 1 < pageCount) {
-            applyLeafRestPose(next, 'right');
-            next.root.setSiblingIndex(0);
-        }
+        // 下层始终铺好下一页；若本就在右页静置，勿重排字（避免落页闪一下）
+        applyLeafRestPose(next, 'right', { force: !next.root.active });
+        if (next.root.parent !== leafLayer) next.root.setParent(leafLayer);
+        next.root.setSiblingIndex(0);
 
-        // 当前页改由翻页动画驱动，静置正面先关掉防叠字
-        leaf.front.forEach((g) => {
-            if (g.node.isValid) g.node.active = false;
-        });
-        leaf.back.forEach((g) => {
-            if (g.node.isValid) g.node.active = false;
-        });
+        // 翻页纸不透明：字必须画在 flip 纸面之上，否则整页发白
         leaf.root.active = true;
-        leaf.root.setSiblingIndex(leafLayer.children.length - 1);
+        leaf.root.setParent(openNode);
         flipNode.active = true;
         flipNode.setSiblingIndex(openNode.children.length - 1);
+        leaf.root.setSiblingIndex(openNode.children.length - 1);
 
-        await animateCurledPageTurn(flipNode, flipG, leaf);
+        await animateCurledPageTurn(flipNode, flipG, leaf, {
+            // 纸面还在时先收掉掀起页，再清纸，避免背面字硬切闪动
+            onBeforeClear: () => {
+                if (!root.isValid) return;
+                cursor = to;
+                if (leaf.root.parent !== leafLayer) leaf.root.setParent(leafLayer);
+                applyLeafRestPose(leaf, 'hidden');
+                // 下层字已在正确静置位，只提层、不重算姿态
+                applyLeafRestPose(next, 'right', { force: false });
+                if (next.root.parent !== leafLayer) next.root.setParent(leafLayer);
+                next.root.setSiblingIndex(leafLayer.children.length - 1);
+                for (let i = 0; i < pageCount; i++) {
+                    if (i === cursor) continue;
+                    applyLeafRestPose(leaves[i]!, 'hidden');
+                    if (leaves[i]!.root.parent !== leafLayer) {
+                        leaves[i]!.root.setParent(leafLayer);
+                    }
+                }
+            },
+        });
         if (!root.isValid) return;
 
-        flipG.clear();
         flipNode.active = false;
-
-        if (from + 1 >= pageCount) {
-            // 五页翻完：复位到第一页，不 settle 重建
-            cursor = 0;
-            for (const l of leaves) applyLeafRestPose(l, 'hidden');
-            applyLeafRestPose(leaves[0]!, 'right');
-            leaves[0]!.root.setSiblingIndex(leafLayer.children.length - 1);
-        } else {
-            if (from > 0) applyLeafRestPose(leaves[from - 1]!, 'hidden');
-            cursor = to;
-            applyLeafRestPose(leaf, 'left');
-            applyLeafRestPose(next, 'right');
-            leaf.root.setSiblingIndex(0);
-            next.root.setSiblingIndex(leafLayer.children.length - 1);
-        }
-
         spawnFlyingKnowledge(root, verseFlyChars(BOOK_VERSES[cursor]!));
     };
 
@@ -372,9 +365,19 @@ function buildLeafPage(parent: Node, verse: Verse, pageNum: number, index: numbe
     return { index, verse, root, front, back };
 }
 
-function applyLeafRestPose(leaf: LeafPage, side: 'left' | 'right' | 'hidden') {
+function applyLeafRestPose(
+    leaf: LeafPage,
+    side: 'left' | 'right' | 'hidden',
+    opts?: { force?: boolean },
+) {
     if (!leaf.root.isValid) return;
     if (side === 'hidden') {
+        leaf.front.forEach((g) => {
+            if (g.node.isValid) g.node.active = false;
+        });
+        leaf.back.forEach((g) => {
+            if (g.node.isValid) g.node.active = false;
+        });
         leaf.root.active = false;
         return;
     }
@@ -382,6 +385,11 @@ function applyLeafRestPose(leaf: LeafPage, side: 'left' | 'right' | 'hidden') {
     leaf.front.forEach((g) => {
         if (!g.node.isValid) return;
         if (side === 'right') {
+            // 已在右页静置时跳过重排，否则 Label 重建会闪一下
+            if (!opts?.force && g.node.active) {
+                g.node.active = true;
+                return;
+            }
             orientBookPageGlyph(g.node, 1, g.u, g.v, 0, 'static');
             g.node.active = true;
         } else {
@@ -391,6 +399,10 @@ function applyLeafRestPose(leaf: LeafPage, side: 'left' | 'right' | 'hidden') {
     leaf.back.forEach((g) => {
         if (!g.node.isValid) return;
         if (side === 'left') {
+            if (!opts?.force && g.node.active) {
+                g.node.active = true;
+                return;
+            }
             orientBookPageGlyph(g.node, -1, g.uLeft, g.v, 0, 'static');
             g.node.active = true;
         } else {
@@ -451,8 +463,14 @@ function placeOnOpenPage(
 
 /**
  * 铰链翻页：只掀一张实体页（正反字预先钉好），不做落页重建
+ * onBeforeClear：清纸前先交接静置页，避免背面字/下层字硬切闪动
  */
-function animateCurledPageTurn(flipNode: Node, g: Graphics, leaf: LeafPage): Promise<void> {
+function animateCurledPageTurn(
+    flipNode: Node,
+    g: Graphics,
+    leaf: LeafPage,
+    opts?: { onBeforeClear?: () => void },
+): Promise<void> {
     return new Promise((resolve) => {
         flipNode.active = true;
         const state = { t: 0 };
@@ -519,8 +537,12 @@ function animateCurledPageTurn(flipNode: Node, g: Graphics, leaf: LeafPage): Pro
                 if (!gph.node.isValid) return;
                 orientBookPageGlyph(gph.node, 1, gph.u, gph.v, t, gph.face);
             });
+            // 每帧把字层压在翻页纸之上，避免被不透明条带盖成空白页
             const lp = leaf.root.parent;
-            if (lp) leaf.root.setSiblingIndex(lp.children.length - 1);
+            if (lp && flipNode.parent === lp) {
+                flipNode.setSiblingIndex(Math.max(0, lp.children.length - 2));
+                leaf.root.setSiblingIndex(lp.children.length - 1);
+            }
         };
 
         draw(0);
@@ -535,6 +557,12 @@ function animateCurledPageTurn(flipNode: Node, g: Graphics, leaf: LeafPage): Pro
             )
             .call(() => {
                 draw(1);
+                try {
+                    opts?.onBeforeClear?.();
+                } catch {
+                    /* ignore settle errors */
+                }
+                // 掀起页已收起后再清纸，避免背面字突然消失闪一下
                 g.clear();
                 resolve();
             })
@@ -673,7 +701,14 @@ function orientBookPageGlyph(
     }
     node.active = true;
     const fade = Math.max(0.15, Math.min(1, (align + 0.18) / 0.4));
-    op.opacity = Math.floor(INK_OPACITY * fade * (face === 'back' ? 0.94 : 1));
+    // 落页前背面字柔和收掉，避免静置切掉时闪一下（静置左页本来就不留字）
+    const settleOut =
+        face === 'back' && t > 0.78 ? Math.max(0, 1 - (t - 0.78) / 0.22) : 1;
+    op.opacity = Math.floor(INK_OPACITY * fade * settleOut * (face === 'back' ? 0.94 : 1));
+    if (settleOut <= 0.02 && face === 'back') {
+        node.active = false;
+        return;
+    }
     node.angle = mesh.angle;
     node.setScale(mesh.sx, mesh.sy, 1);
 }

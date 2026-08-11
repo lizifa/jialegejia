@@ -29,7 +29,7 @@ export const Colors = {
 export const Brand = {
     name: '诗匣',
     tagline: '翻开见诗',
-    hook: '两种玩法 · 清匣消除 · 点亮诗句',
+    hook: '点亮诗句 · 清匣消除 · 花灯猜谜',
     full: '诗匣 · 翻开见诗',
     version: 'v1.0.0',
     modePoem: '点亮诗句',
@@ -40,6 +40,7 @@ export const Brand = {
     modeDailySub: (title: string) => `今日「${title}」· 短关速背`,
     linkBlind: '盲翻诗',
     linkRiddle: '猜灯谜',
+    linkRiddleSub: '花灯千题 · 四选一猜谜',
     linkLevels: '选关',
     linkCatalog: '图鉴',
     linkLibrary: '诗藏',

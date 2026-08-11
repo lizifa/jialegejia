@@ -28,7 +28,6 @@ import {
     Colors,
     Design,
     PlayMode,
-    blindModeUnlocked,
     dailyLevelId,
     difficultyTier,
     ITEM_MAP,
@@ -38,47 +37,47 @@ import {
     resolveBoardGlyphMode,
 } from './core/Config';
 import { MatchGame, TileModel, LevelJson } from './core/MatchGame';
-import { getSafeLayout, SafeLayout } from './core/SafeArea';
+import { getSafeLayout } from './core/SafeArea';
 import { PropKind, SaveData } from './core/SaveData';
 import {
     formatVerseProgress,
     getVerseForLevel,
     verseCharSequence,
     verseKindLabel,
-    versesByKind,
     Verse,
     VerseKind,
 } from './core/Literature';
-import { LANTERN_RIDDLES, riddleByIndex } from './core/Riddles';
+import { LANTERN_RIDDLES } from './core/Riddles';
 import {
     addBg,
     addButton,
     addCircleBtn,
     addLabel,
-    bindJellyPress,
     colorFromHex,
     drawIsoSlot,
     ensureUI,
     fadeMask,
     fillRect,
-    idleBreathe,
-    idleFadePulse,
-    idleSway,
     makeNode,
-    makeVerticalScroll,
     mountEmbeddedBoardGlyph,
     hideEmbeddedBoardGlyph,
-    onTapWithoutScroll,
     popupScaleIn,
     popupSlideUp,
     setOpacity,
-    softFadeIn,
-    softRiseIn,
     strokeRect,
 } from './ui/UIKit';
-import { mountHomeFlipBook } from './ui/HomeBookFX';
 import { TileItem } from './ui/TileItem';
 import { flashVerseHud, playLineBrush, playVerseInkReveal, playVerseSeal } from './ui/VerseFX';
+import {
+    AboutPage,
+    CatalogPage,
+    HomePage,
+    HowToPage,
+    LibraryPage,
+    RiddlePage,
+    SettingsPage,
+    disableHit as pageDisableHit,
+} from './ui/pages';
 
 const { ccclass } = _decorator;
 
@@ -178,21 +177,41 @@ export class GameApp extends Component {
     }
 
     private tip(msg: string) {
+        if (!this.nodeAlive(this.overlayRoot)) return;
+        const safe = getSafeLayout();
+        // 底部轻提示，避开首页书页/主按钮中区
+        const y = safe.contentBottom + 96;
+
         const tipOk = !!this.tipLabel?.isValid && this.nodeAlive(this.tipLabel.node);
+        let host: Node;
         if (!tipOk) {
-            if (!this.nodeAlive(this.overlayRoot)) return;
-            const lab = addLabel(this.overlayRoot, 'tip', msg, 26, Colors.highlight, 560, 48, true);
-            lab.node.setPosition(0, 200, 0);
+            host = makeNode('tipHost', this.overlayRoot, 600, 56);
+            const bg = host.addComponent(Graphics);
+            bg.fillColor = colorFromHex('#2F2118', 200);
+            bg.roundRect(-290, -26, 580, 52, 16);
+            bg.fill();
+            const lab = addLabel(host, 'tip', msg, 24, '#FFF8F0', 540, 40, true);
+            lab.node.setPosition(0, 0, 0);
             this.tipLabel = lab;
         } else {
+            host = this.tipLabel!.node.parent?.isValid
+                ? this.tipLabel!.node.parent
+                : this.tipLabel!.node;
             this.tipLabel!.string = msg;
         }
-        const n = this.tipLabel!.node;
-        if (!this.nodeAlive(n)) return;
-        setOpacity(n, 255);
-        const op = n.getComponent(UIOpacity) || n.addComponent(UIOpacity);
+
+        if (!this.nodeAlive(host)) return;
+        host.setSiblingIndex(this.overlayRoot.children.length - 1);
+        host.setPosition(0, y - 18, 0);
+        setOpacity(host, 255);
+        Tween.stopAllByTarget(host);
+        const op = host.getComponent(UIOpacity) || host.addComponent(UIOpacity);
         Tween.stopAllByTarget(op);
-        tween(op).delay(1.2).to(0.25, { opacity: 0 }).start();
+        op.opacity = 255;
+        tween(host)
+            .to(0.18, { position: new Vec3(0, y, 0) }, { easing: 'sineOut' })
+            .start();
+        tween(op).delay(1.35).to(0.28, { opacity: 0 }).start();
     }
 
     // ---------------- Boot ----------------
@@ -251,385 +270,8 @@ export class GameApp extends Component {
         }
     };
 
-    /** 首页氛围：暖宣纸底 + 轻软斑点与角隅晕染（可爱但不花哨） */
-    private drawHomeAtmosphere(parent: Node, visH: number): Node {
-        const root = makeNode('atmosphere', parent, Design.width, visH);
-        const g = root.addComponent(Graphics);
-        g.fillColor = colorFromHex('#F6EDE0');
-        g.rect(-Design.width * 0.5, -visH * 0.5, Design.width, visH);
-        g.fill();
-        // 上下柔晕，让中间内容更跳
-        g.fillColor = colorFromHex('#EED9C2', 90);
-        g.ellipse(0, visH * 0.42, 420, 120);
-        g.fill();
-        g.fillColor = colorFromHex('#E8C9A8', 55);
-        g.ellipse(0, -visH * 0.46, 380, 90);
-        g.fill();
-        // 纸纤维小点
-        const flecks = [
-            [-280, 380, 3],
-            [260, 340, 2.5],
-            [-220, -420, 2],
-            [240, -380, 3],
-            [-300, 80, 2],
-            [290, -60, 2.5],
-            [-160, 480, 2],
-            [180, 460, 2],
-        ];
-        flecks.forEach(([x, y, r]) => {
-            g.fillColor = colorFromHex('#C4A36A', 70);
-            g.circle(x, y * (visH / 1280), r);
-            g.fill();
-        });
-        // 角隅小云朵（软圆）
-        const puff = (px: number, py: number, s: number) => {
-            g.fillColor = colorFromHex('#FFF8F0', 160);
-            g.circle(px, py, 18 * s);
-            g.fill();
-            g.circle(px + 16 * s, py + 4 * s, 14 * s);
-            g.fill();
-            g.circle(px - 14 * s, py + 2 * s, 12 * s);
-            g.fill();
-        };
-        puff(-280, visH * 0.28, 1.1);
-        puff(270, visH * 0.22, 0.9);
-        puff(-250, -visH * 0.3, 0.85);
-        this.disableHit(root);
-        return root;
-    }
-
-    /**
-     * 顶部倒挂饰物：灯笼 / 流苏 / 平安结 + 会动的小猴子
-     */
-    private drawHomeHangings(parent: Node, safe: SafeLayout): void {
-        const top = safe.half - Math.max(8, safe.topInset * 0.15);
-        const items: Array<{ x: number; kind: 'lantern' | 'tassel' | 'knot'; len: number }> = [
-            { x: -268, kind: 'lantern', len: 52 },
-            { x: -198, kind: 'tassel', len: 68 },
-            { x: 210, kind: 'tassel', len: 62 },
-            { x: 268, kind: 'lantern', len: 48 },
-            { x: 118, kind: 'knot', len: 44 },
-        ];
-
-        items.forEach((it, idx) => {
-            const root = makeNode(`hang${idx}`, parent, 48, it.len + 36);
-            root.setPosition(it.x, top - it.len * 0.35, 0);
-            const g = root.addComponent(Graphics);
-            g.strokeColor = colorFromHex('#8B5A32', 160);
-            g.lineWidth = 1.6;
-            g.moveTo(0, it.len * 0.5);
-            g.lineTo(0, it.len * 0.5 - 16);
-            g.stroke();
-
-            if (it.kind === 'lantern') {
-                // 圆润小灯笼 + 微笑
-                g.fillColor = colorFromHex('#C45C3A', 235);
-                g.ellipse(0, it.len * 0.5 - 34, 12, 14);
-                g.fill();
-                g.fillColor = colorFromHex('#E8C98A', 230);
-                g.ellipse(0, it.len * 0.5 - 20, 11, 3);
-                g.fill();
-                g.ellipse(0, it.len * 0.5 - 48, 10, 3);
-                g.fill();
-                g.strokeColor = colorFromHex('#5C2A1A', 160);
-                g.lineWidth = 1.2;
-                g.arc(0, it.len * 0.5 - 36, 4, Math.PI * 1.15, Math.PI * 1.85, false);
-                g.stroke();
-                g.fillColor = colorFromHex('#5C2A1A', 180);
-                g.circle(-3.5, it.len * 0.5 - 32, 1.2);
-                g.circle(3.5, it.len * 0.5 - 32, 1.2);
-                g.fill();
-                g.strokeColor = colorFromHex('#E8C98A', 200);
-                g.lineWidth = 1.4;
-                g.moveTo(0, it.len * 0.5 - 50);
-                g.lineTo(0, it.len * 0.5 - 62);
-                g.stroke();
-                g.fillColor = colorFromHex('#E8C98A', 210);
-                g.circle(0, it.len * 0.5 - 64, 2.5);
-                g.fill();
-            } else if (it.kind === 'tassel') {
-                g.fillColor = colorFromHex('#9A3E28', 210);
-                g.roundRect(-6, it.len * 0.5 - 28, 12, 10, 4);
-                g.fill();
-                const strands = [-5, -2, 1, 4];
-                strands.forEach((sx, si) => {
-                    g.strokeColor = colorFromHex(si % 2 === 0 ? '#C45C3A' : '#E8C98A', 190);
-                    g.lineWidth = 1.3;
-                    g.moveTo(sx, it.len * 0.5 - 28);
-                    g.lineTo(sx + (si % 2 === 0 ? -2 : 2), it.len * 0.5 - 28 - (22 + si * 4));
-                    g.stroke();
-                });
-            } else {
-                g.strokeColor = colorFromHex('#C45C3A', 210);
-                g.lineWidth = 2;
-                g.circle(0, it.len * 0.5 - 28, 7);
-                g.stroke();
-                g.circle(0, it.len * 0.5 - 28, 3.5);
-                g.stroke();
-                g.fillColor = colorFromHex('#E8C98A', 220);
-                g.circle(0, it.len * 0.5 - 40, 2.2);
-                g.fill();
-            }
-
-            this.disableHit(root);
-            idleSway(root, 3.5 + (idx % 3), 1.6 + (idx % 2) * 0.25, idx * 0.12);
-        });
-
-        this.mountHangingMonkey(parent, -108, top);
-    }
-
-    /** 倒挂小猴子：后脚绑绳、向人招手（属猴彩蛋） */
-    private mountHangingMonkey(parent: Node, x: number, topY: number): void {
-        const root = makeNode('hangMonkey', parent, 96, 176);
-        root.setPosition(x, topY - 52, 0);
-
-        const rope = makeNode('rope', root, 28, 100);
-        rope.setPosition(0, 64, 0);
-        const rg = rope.addComponent(Graphics);
-        rg.strokeColor = colorFromHex('#8B5A32', 180);
-        rg.lineWidth = 2.4;
-        rg.moveTo(0, 44);
-        rg.lineTo(0, -28);
-        rg.stroke();
-        rg.fillColor = colorFromHex('#E8C98A', 220);
-        rg.circle(0, 18, 2.2);
-        rg.circle(0, -4, 2.2);
-        rg.fill();
-
-        const swing = makeNode('swing', root, 90, 120);
-        swing.setPosition(0, -28, 0);
-
-        const monkey = makeNode('monkey', swing, 90, 120);
-        monkey.setPosition(0, 0, 0);
-        const g = monkey.addComponent(Graphics);
-        const fur = '#C4874A';
-        const furDark = '#8B5A32';
-        const face = '#F3C9A0';
-        const ink = '#3A2A22';
-        const blush = '#FFB0A0';
-
-        // 身体（倒挂，头朝下）
-        g.fillColor = colorFromHex(fur);
-        g.ellipse(0, 6, 13, 16);
-        g.fill();
-        g.fillColor = colorFromHex(face);
-        g.ellipse(0, 4, 8, 10);
-        g.fill();
-
-        // 小腿从身体连到上方被绑的脚
-        g.fillColor = colorFromHex(fur);
-        g.ellipse(-7, 24, 4.2, 10);
-        g.ellipse(7, 24, 4.2, 10);
-        g.fill();
-        // 脚掌朝上，伸进绳结里
-        g.fillColor = colorFromHex(face);
-        g.ellipse(-7, 36, 6, 4);
-        g.ellipse(7, 36, 6, 4);
-        g.fill();
-        g.fillColor = colorFromHex('#E8B890');
-        g.circle(-7, 37.5, 1.4);
-        g.circle(7, 37.5, 1.4);
-        g.fill();
-
-        // 头在下方
-        g.fillColor = colorFromHex(fur);
-        g.circle(0, -22, 17);
-        g.fill();
-        g.fillColor = colorFromHex(face);
-        g.ellipse(0, -24, 11, 10);
-        g.fill();
-        g.fillColor = colorFromHex(fur);
-        g.circle(-15, -18, 6);
-        g.circle(15, -18, 6);
-        g.fill();
-        g.fillColor = colorFromHex(face);
-        g.circle(-15, -18, 3.4);
-        g.circle(15, -18, 3.4);
-        g.fill();
-        g.fillColor = colorFromHex(blush, 150);
-        g.ellipse(-9, -27, 3.8, 2.2);
-        g.ellipse(9, -27, 3.8, 2.2);
-        g.fill();
-        g.fillColor = colorFromHex(ink);
-        g.ellipse(0, -25.5, 2.4, 1.8);
-        g.fill();
-        g.strokeColor = colorFromHex(ink, 210);
-        g.lineWidth = 1.3;
-        g.arc(0, -29, 3.2, Math.PI * 1.15, Math.PI * 1.85, false);
-        g.stroke();
-
-        // 绳子明确缠住双脚脚踝（画在脚上方，看得见绑住）
-        const bind = makeNode('bind', monkey, 44, 28);
-        bind.setPosition(0, 36, 0);
-        const bg = bind.addComponent(Graphics);
-        // 分叉到两脚踝
-        bg.strokeColor = colorFromHex('#8B5A32', 220);
-        bg.lineWidth = 2.2;
-        bg.moveTo(0, 10);
-        bg.lineTo(-7, 2);
-        bg.moveTo(0, 10);
-        bg.lineTo(7, 2);
-        bg.stroke();
-        // 左脚踝缠绕
-        bg.lineWidth = 2.4;
-        bg.ellipse(-7, 0, 7.5, 4.5);
-        bg.stroke();
-        bg.ellipse(-7, -2, 6.5, 3.5);
-        bg.stroke();
-        // 右脚踝缠绕
-        bg.ellipse(7, 0, 7.5, 4.5);
-        bg.stroke();
-        bg.ellipse(7, -2, 6.5, 3.5);
-        bg.stroke();
-        // 中间蝴蝶结
-        bg.fillColor = colorFromHex('#C45C3A', 245);
-        bg.ellipse(-5, 8, 5.5, 3.5);
-        bg.ellipse(5, 8, 5.5, 3.5);
-        bg.fill();
-        bg.fillColor = colorFromHex('#E8C98A', 240);
-        bg.circle(0, 8, 2.8);
-        bg.fill();
-
-        const tuft = makeNode('tuft', monkey, 18, 18);
-        tuft.setPosition(0, -38, 0);
-        const tg = tuft.addComponent(Graphics);
-        tg.fillColor = colorFromHex(furDark);
-        tg.ellipse(0, 0, 4, 6);
-        tg.fill();
-        tg.ellipse(-3, 2, 2.5, 4);
-        tg.ellipse(3, 2, 2.5, 4);
-        tg.fill();
-
-        const eyes = makeNode('eyes', monkey, 40, 14);
-        eyes.setPosition(0, -21, 0);
-        const eg = eyes.addComponent(Graphics);
-        eg.fillColor = colorFromHex(ink);
-        eg.ellipse(-5.5, 0, 2.6, 3.4);
-        eg.ellipse(5.5, 0, 2.6, 3.4);
-        eg.fill();
-        eg.fillColor = colorFromHex('#FFFFFF', 235);
-        eg.circle(-6.2, 1.1, 1);
-        eg.circle(4.8, 1.1, 1);
-        eg.fill();
-
-        const makeArm = (name: string, ax: number, side: 1 | -1) => {
-            const arm = makeNode(name, monkey, 28, 36);
-            arm.setPosition(ax, 2, 0);
-            const ag = arm.addComponent(Graphics);
-            ag.fillColor = colorFromHex(fur);
-            ag.ellipse(side * 2, -2, 4.2, 10);
-            ag.fill();
-            ag.fillColor = colorFromHex(face);
-            ag.circle(side * 3, -14, 5);
-            ag.fill();
-            ag.circle(side * 6, -16, 2);
-            ag.circle(side * 0.5, -18, 2);
-            ag.fill();
-            return arm;
-        };
-        const armL = makeArm('armL', -14, -1);
-        const armR = makeArm('armR', 14, 1);
-
-        // 尾巴甩在身体侧面，避免看起来像挂在绳上
-        const tail = makeNode('tail', monkey, 40, 40);
-        tail.setPosition(-12, 8, 0);
-        const tlg = tail.addComponent(Graphics);
-        tlg.strokeColor = colorFromHex(furDark, 230);
-        tlg.lineWidth = 3.2;
-        tlg.moveTo(4, 0);
-        tlg.quadraticCurveTo(-12, 6, -16, 16);
-        tlg.quadraticCurveTo(-10, 24, 0, 20);
-        tlg.stroke();
-
-        this.disableHit(root);
-        idleSway(root, 5.5, 2.1, 0.12);
-
-        tween(armR)
-            .to(0.28, { eulerAngles: new Vec3(0, 0, 42) }, { easing: 'sineOut' })
-            .to(0.28, { eulerAngles: new Vec3(0, 0, 8) }, { easing: 'sineInOut' })
-            .to(0.28, { eulerAngles: new Vec3(0, 0, 38) }, { easing: 'sineOut' })
-            .to(0.32, { eulerAngles: new Vec3(0, 0, 12) }, { easing: 'sineInOut' })
-            .delay(0.35)
-            .union()
-            .repeatForever()
-            .start();
-        tween(armL)
-            .delay(0.2)
-            .to(0.3, { eulerAngles: new Vec3(0, 0, -36) }, { easing: 'sineOut' })
-            .to(0.3, { eulerAngles: new Vec3(0, 0, -6) }, { easing: 'sineInOut' })
-            .to(0.28, { eulerAngles: new Vec3(0, 0, -40) }, { easing: 'sineOut' })
-            .to(0.34, { eulerAngles: new Vec3(0, 0, -10) }, { easing: 'sineInOut' })
-            .delay(0.45)
-            .union()
-            .repeatForever()
-            .start();
-
-        tween(eyes)
-            .delay(1.5)
-            .to(0.05, { scale: new Vec3(1, 0.12, 1) })
-            .to(0.08, { scale: new Vec3(1, 1, 1) })
-            .delay(0.3)
-            .to(0.05, { scale: new Vec3(1, 0.12, 1) })
-            .to(0.08, { scale: new Vec3(1, 1, 1) })
-            .delay(2.3)
-            .union()
-            .repeatForever()
-            .start();
-
-        tween(monkey)
-            .to(1.1, { eulerAngles: new Vec3(0, 0, 3.5) }, { easing: 'sineInOut' })
-            .to(1.1, { eulerAngles: new Vec3(0, 0, -3.5) }, { easing: 'sineInOut' })
-            .union()
-            .repeatForever()
-            .start();
-        const base = swing.position.clone();
-        tween(swing)
-            .to(0.95, { position: new Vec3(base.x, base.y - 2.5, 0) }, { easing: 'sineInOut' })
-            .to(0.95, { position: base }, { easing: 'sineInOut' })
-            .union()
-            .repeatForever()
-            .start();
-
-        tween(tuft)
-            .to(0.55, { eulerAngles: new Vec3(0, 0, 10) }, { easing: 'sineInOut' })
-            .to(0.55, { eulerAngles: new Vec3(0, 0, -10) }, { easing: 'sineInOut' })
-            .union()
-            .repeatForever()
-            .start();
-        tween(tail)
-            .to(0.5, { eulerAngles: new Vec3(0, 0, -16) }, { easing: 'sineInOut' })
-            .to(0.5, { eulerAngles: new Vec3(0, 0, 12) }, { easing: 'sineInOut' })
-            .union()
-            .repeatForever()
-            .start();
-    }
-
-    /**
-     * 首页主视觉：一匣一书 —— 合上的诗匣，点按翻页飞字
-     */
-    private drawHomeHero(parent: Node, y: number, height = 300): { root: Node; height: number } {
-        const h = height;
-        const hero = makeNode('hero', parent, 680, h);
-        hero.setPosition(0, y, 0);
-        const g = hero.addComponent(Graphics);
-        const sy = h / 220;
-
-        // 轻底晕，不抢书；书本几何中心对准标题中轴
-        g.fillColor = colorFromHex('#C9A882', 40);
-        g.ellipse(0, -10 * sy, 240 * sy, 26 * sy);
-        g.fill();
-
-        const bookScale = Math.min(1.65, Math.max(1.25, sy * 1.45));
-        mountHomeFlipBook(hero, 0, 4 * sy, bookScale, {
-            autoFlipInterval: 1.8,
-            tip: (s) => this.tip(s),
-        });
-
-        return { root: hero, height: h };
-    }
-
+    /** 启动页装饰：缩略书架 */
     private drawDecorShelf(parent: Node, x: number, y: number): Node {
-        // 兼容旧调用：缩略书架
         const shelf = makeNode('shelf', parent, 280, 200);
         shelf.setPosition(x, y, 0);
         const g = shelf.addComponent(Graphics);
@@ -891,193 +533,17 @@ export class GameApp extends Component {
     private showHome() {
         this.clearPage();
         this.page = 'home';
-        const p = this.pageRoot;
-        const save = SaveData.load();
-        const lv = Math.max(1, Math.min(Design.totalLevels, save.maxUnlocked));
-        const verse = getVerseForLevel(lv);
-        const dailyId = dailyLevelId();
-        const dailyVerse = getVerseForLevel(dailyId);
-        const blindOk = blindModeUnlocked(save.maxUnlocked);
-
-        const safe = getSafeLayout();
-        const visH = safe.visH;
-        this.drawHomeAtmosphere(p, visH);
-        this.drawHomeHangings(p, safe);
-
-        // 紧凑一屏：品牌 → 主视觉 → 主 CTA → 双列次级 → 底链
-        const brandH = 48;
-        const tagH = 20;
-        const primaryH = 88;
-        const modeH = 72;
-        const linksH = 44;
-        const footH = 20;
-        const gapBrandTag = 4;
-        const gapTagHero = 10;
-        const gapHeroModes = 36;
-        const gapPrimaryDual = 22;
-        const gapModesLinks = 26;
-        const gapLinksFoot = 12;
-        const heroH = Math.min(360, Math.max(260, visH * 0.36));
-        const dualH = modeH;
-        const totalH =
-            brandH +
-            gapBrandTag +
-            tagH +
-            gapTagHero +
-            heroH +
-            gapHeroModes +
-            primaryH +
-            gapPrimaryDual +
-            dualH +
-            gapModesLinks +
-            linksH +
-            gapLinksFoot +
-            footH;
-
-        const safeTop = safe.contentTop - 6;
-        const safeBot = safe.contentBottom + 6;
-        let shiftY = 0;
-        const topEdge = totalH * 0.5;
-        const botEdge = -totalH * 0.5;
-        if (topEdge > safeTop) shiftY = safeTop - topEdge;
-        if (botEdge + shiftY < safeBot) shiftY = safeBot - botEdge;
-
-        let cursor = totalH * 0.5 + shiftY;
-        const brandY = cursor - brandH * 0.5;
-        cursor -= brandH + gapBrandTag;
-        const tagY = cursor - tagH * 0.5;
-        cursor -= tagH + gapTagHero;
-        const heroY = cursor - heroH * 0.5;
-        cursor -= heroH + gapHeroModes;
-        const primaryY = cursor - primaryH * 0.5;
-        cursor -= primaryH + gapPrimaryDual;
-        const dualY = cursor - dualH * 0.5;
-        cursor -= dualH + gapModesLinks;
-        const linksY = cursor - linksH * 0.5;
-        cursor -= linksH + gapLinksFoot;
-        const footY = cursor - footH * 0.5;
-
-        const ink = '#2F2118';
-        const lacquer = '#C45C3A';
-
-        const brandLab = addLabel(p, 'brand', Brand.name, 50, ink, 640, brandH, true);
-        brandLab.spacingX = 10;
-        const brand = brandLab.node;
-        brand.setPosition(0, brandY, 0);
-
-        // 品牌两侧细线（静物印章感，无漂浮）
-        const decoL = makeNode('decoL', p, 28, 28);
-        decoL.setPosition(-118, brandY + 2, 0);
-        const dlg = decoL.addComponent(Graphics);
-        dlg.strokeColor = colorFromHex(lacquer, 180);
-        dlg.lineWidth = 1.6;
-        dlg.roundRect(-10, -10, 20, 20, 3);
-        dlg.stroke();
-        dlg.fillColor = colorFromHex(lacquer, 200);
-        dlg.circle(0, 0, 3);
-        dlg.fill();
-        const decoR = makeNode('decoR', p, 28, 28);
-        decoR.setPosition(118, brandY + 2, 0);
-        const drg = decoR.addComponent(Graphics);
-        drg.strokeColor = colorFromHex('#6B8F6A', 180);
-        drg.lineWidth = 1.6;
-        drg.roundRect(-10, -10, 20, 20, 3);
-        drg.stroke();
-        drg.fillColor = colorFromHex('#6B8F6A', 200);
-        drg.circle(0, 0, 3);
-        drg.fill();
-
-        const tagLab = addLabel(
-            p,
-            'tag',
-            `${Brand.tagline}　·　两种玩法`,
-            17,
-            lacquer,
-            560,
-            tagH,
-            true,
-        );
-        tagLab.spacingX = 3;
-        tagLab.node.setPosition(0, tagY, 0);
-
-        const { root: hero } = this.drawHomeHero(p, heroY, heroH);
-
-        const poemBtn = this.drawHomePrimaryCta(
-            p,
-            Brand.modePoem,
-            Brand.modePoemSub(lv, verse.title),
-            () => this.startPlayMode('poem', lv),
-        );
-        poemBtn.setPosition(0, primaryY, 0);
-
-        const dual = makeNode('dualModes', p, 560, dualH);
-        dual.setPosition(0, dualY, 0);
-        const matchBtn = this.drawHomeModeCard(
-            dual,
-            Brand.modeMatch3,
-            Brand.modeMatch3Sub,
-            '#E07058',
-            () => this.startPlayMode('match3', lv),
-            268,
-            modeH,
-        );
-        matchBtn.setPosition(-146, 0, 0);
-        const dailyBtn = this.drawHomeModeCard(
-            dual,
-            Brand.modeDaily,
-            Brand.modeDailySub(dailyVerse.title),
-            '#6FBE88',
-            () => this.startPlayMode('daily', dailyId),
-            268,
-            modeH,
-        );
-        dailyBtn.setPosition(146, 0, 0);
-
-        const links = this.drawHomeTextLinks(
-            p,
-            [
-                {
-                    name: Brand.linkBlind,
-                    fn: () => {
-                        if (!blindOk) {
-                            this.tip('先通关第 3 关，再来挑战盲翻诗');
-                            return;
-                        }
-                        this.startPlayMode('blind', lv);
-                    },
-                },
-                { name: Brand.linkRiddle, fn: () => this.showLanternRiddle() },
-                { name: Brand.linkLevels, fn: () => this.showLevelPickPopup() },
-                { name: Brand.linkCatalog, fn: () => this.showCatalog() },
-                { name: Brand.linkLibrary, fn: () => this.showLibrary('poem') },
-                { name: Brand.linkHowTo, fn: () => this.showHowTo() },
-                { name: Brand.linkSettings, fn: () => this.showSettings() },
-            ],
-            94,
-        );
-        links.setPosition(0, linksY, 0);
-
-        const foot = addLabel(p, 'foot', Brand.foot, 13, '#B8A090', 560, footH, true);
-        foot.node.setPosition(0, footY, 0);
-        foot.node.addComponent(BlockInputEvents);
-        foot.node.on(Node.EventType.TOUCH_END, () => this.showLegalPopup());
-
-        // 入场：墨痕式淡入上浮 —— 品牌 → 诗匣 → 按钮，节奏拉开
-        softRiseIn(brand, 0.02, 16);
-        softFadeIn(decoL, 0.12);
-        softFadeIn(decoR, 0.12);
-        softRiseIn(tagLab.node, 0.1, 10);
-        softFadeIn(hero, 0.18, 0.45);
-        softRiseIn(poemBtn, 0.48, 28);
-        softRiseIn(matchBtn, 0.58, 18);
-        softRiseIn(dailyBtn, 0.62, 18);
-        softRiseIn(links, 0.72, 14);
-        softFadeIn(foot.node, 0.8, 0.35);
-
-        // 主按钮极轻呼吸（不再满屏漂浮/果冻闲时）
-        idleBreathe(poemBtn, 0.012, 1.8, 1.0);
-        const glow = poemBtn.getChildByName('glow');
-        if (glow) idleFadePulse(glow, 50, 120, 1.6, 1.0);
+        HomePage.mount(this.pageRoot, {
+            tip: (m) => this.tip(m),
+            startPlayMode: (mode, levelId) => this.startPlayMode(mode, levelId),
+            showLanternRiddle: () => this.showLanternRiddle(),
+            showLevelPickPopup: () => this.showLevelPickPopup(),
+            showCatalog: () => this.showCatalog(),
+            showLibrary: () => this.showLibrary('poem'),
+            showHowTo: () => this.showHowTo('home'),
+            showSettings: () => this.showSettings(),
+            showLegalPopup: () => this.showLegalPopup(),
+        });
     }
 
     private startPlayMode(mode: PlayMode, levelId: number) {
@@ -1092,97 +558,6 @@ export class GameApp extends Component {
             this.game.freePropsLeft += 1;
             this.refreshEconomyHud();
         }
-    }
-
-    /** 首页次级模式卡片（支持自定义宽高，双列用） */
-    private drawHomeModeCard(
-        parent: Node,
-        title: string,
-        sub: string,
-        accent: string,
-        onClick: () => void,
-        w = 520,
-        h = 64,
-    ): Node {
-        const node = makeNode(`mode_${title}`, parent, w, h);
-        const g = node.addComponent(Graphics);
-        g.fillColor = colorFromHex('#FFF8F0', 245);
-        g.roundRect(-w * 0.5, -h * 0.5, w, h, 18);
-        g.fill();
-        g.strokeColor = colorFromHex(accent, 210);
-        g.lineWidth = 2;
-        g.roundRect(-w * 0.5, -h * 0.5, w, h, 18);
-        g.stroke();
-        g.fillColor = colorFromHex(accent);
-        g.roundRect(-w * 0.5 + 8, -h * 0.22, 5, h * 0.44, 2.5);
-        g.fill();
-        addLabel(node, 't', title, w < 300 ? 22 : 26, Colors.brown, w - 36, 28, true).node.setPosition(4, 10, 0);
-        addLabel(node, 's', sub, w < 300 ? 12 : 15, Colors.text, w - 36, 36, false).node.setPosition(4, -14, 0);
-        bindJellyPress(node, onClick);
-        return node;
-    }
-
-    private drawHomePrimaryCta(parent: Node, title: string, sub: string, onClick: () => void): Node {
-        const w = 540;
-        const h = 88;
-        const node = makeNode('start', parent, w, h);
-        const glow = makeNode('glow', node, w + 24, h + 20);
-        const gg = glow.addComponent(Graphics);
-        gg.fillColor = colorFromHex('#E07058', 40);
-        gg.roundRect(-(w + 24) * 0.5, -(h + 20) * 0.5, w + 24, h + 20, 32);
-        gg.fill();
-
-        const g = node.addComponent(Graphics);
-        g.fillColor = colorFromHex('#C45C3A', 45);
-        g.roundRect(-w * 0.5 + 5, -h * 0.5 - 5, w - 10, h, 26);
-        g.fill();
-        g.fillColor = colorFromHex('#E07058');
-        g.roundRect(-w * 0.5, -h * 0.5, w, h, 26);
-        g.fill();
-        g.fillColor = colorFromHex('#F09070');
-        g.roundRect(-w * 0.5 + 4, -h * 0.5 + 4, w - 8, h * 0.44, 22);
-        g.fill();
-        g.strokeColor = colorFromHex('#FFE0C8', 210);
-        g.lineWidth = 2;
-        g.roundRect(-w * 0.5 + 3, -h * 0.5 + 3, w - 6, h - 6, 24);
-        g.stroke();
-        g.fillColor = colorFromHex('#FFE8D0', 210);
-        g.circle(-w * 0.5 + 20, 0, 3.5);
-        g.fill();
-        g.circle(w * 0.5 - 20, 0, 3.5);
-        g.fill();
-        const t = addLabel(node, 't', title, 34, '#FFF8F0', w - 24, 40, true);
-        t.spacingX = 6;
-        t.node.setPosition(0, 11, 0);
-        addLabel(node, 's', sub, 16, '#FFE8D8', w - 40, 26, true).node.setPosition(0, -20, 0);
-        bindJellyPress(node, onClick);
-        return node;
-    }
-
-    /** 文字底链（轻描边，无逐个弹入） */
-    private drawHomeTextLinks(
-        parent: Node,
-        items: { name: string; fn: () => void }[],
-        step = 200,
-    ): Node {
-        const root = makeNode('links', parent, 680, 48);
-        items.forEach((it, i) => {
-            const x = (i - (items.length - 1) / 2) * step;
-            const chipW = Math.min(92, step - 8);
-            const chip = makeNode(`chip${i}`, root, chipW, 38);
-            chip.setPosition(x, 0, 0);
-            const cg = chip.addComponent(Graphics);
-            cg.fillColor = colorFromHex('#FFF8F0', 200);
-            cg.roundRect(-chipW * 0.5, -17, chipW, 34, 12);
-            cg.fill();
-            cg.strokeColor = colorFromHex('#E8C9A0', 110);
-            cg.lineWidth = 1;
-            cg.roundRect(-chipW * 0.5, -17, chipW, 34, 12);
-            cg.stroke();
-            addLabel(chip, 't', it.name, 17, '#6B4A30', chipW - 6, 28, true).node.setPosition(0, 0, 0);
-            bindJellyPress(chip, it.fn);
-        });
-        return root;
     }
 
     private showLevelPickPopup() {
@@ -1317,27 +692,10 @@ export class GameApp extends Component {
     private showCatalog() {
         this.clearPage();
         this.page = 'catalog';
-        const p = this.pageRoot;
-        const safe = this.placePageHeader(p, '盲盒图鉴', () => this.showHome());
-
-        const grid = makeNode('grid', p, 640, 900);
-        grid.setPosition(0, (safe.contentBottom + safe.contentTop) * 0.5, 0);
-        ITEMS.forEach((item, i) => {
-            const col = i % 2;
-            const row = Math.floor(i / 2);
-            const cell = addBg(grid, item.id, 280, 140, Colors.panel, 12);
-            cell.setPosition(col === 0 ? -150 : 150, 380 - row * 155, 0);
-            strokeRect(cell.getComponent(Graphics)!, 280, 140, Colors.slotBorder, 2, 12);
-            const cube = makeNode('cube', cell, 90, 90);
-            cube.setPosition(-80, 0, 0);
-            this.applyTileSprite(cube, item.id, false);
-            ensureUI(cube, 90, 90);
-            addLabel(cell, 'name', item.name, 26, Colors.title, 160, 40, true).node.setPosition(50, 20, 0);
-            addLabel(cell, 'tag', `第${item.unlockLevel}关出现`, 18, Colors.text, 160, 30).node.setPosition(
-                50,
-                -20,
-                0,
-            );
+        CatalogPage.mount(this.pageRoot, {
+            onBack: () => this.showHome(),
+            applyTileSprite: (node, itemId, locked) => this.applyTileSprite(node, itemId, locked),
+            backFrame: this.uiFrames.get('btn_back'),
         });
     }
 
@@ -1345,63 +703,12 @@ export class GameApp extends Component {
     private showLibrary(tab: VerseKind = 'poem') {
         this.clearPage();
         this.page = 'library';
-        const p = this.pageRoot;
-        const list = versesByKind(tab);
-
-        const safe = this.placePageHeader(p, '诗藏馆', () => this.showHome());
-        addLabel(p, 'prog', `${list.length} 篇`, 20, Colors.highlight, 200, 36, true).node.setPosition(
-            270,
-            safe.headerY,
-            0,
-        );
-
-        const tabs: { id: VerseKind; name: string }[] = [
-            { id: 'poem', name: '古诗' },
-            { id: 'quote', name: '名言' },
-            { id: 'prose', name: '文言文' },
-        ];
-        const tabY = safe.headerY - safe.headerBtnSize * 0.5 - 36;
-        tabs.forEach((t, i) => {
-            addButton(
-                p,
-                `tab_${t.id}`,
-                t.name,
-                160,
-                48,
-                tab === t.id ? Colors.btnAd : Colors.btnShare,
-                () => this.showLibrary(t.id),
-                { fontSize: 22, textHex: Colors.brown },
-            ).node.setPosition(-170 + i * 170, tabY, 0);
-        });
-
-        addLabel(p, 'hint', `${verseKindLabel(tab)} · 点击阅读`, 18, Colors.text, 560, 28, true).node.setPosition(
-            0,
-            tabY - 40,
-            0,
-        );
-
-        const boardTop = tabY - 56;
-        const boardBot = safe.contentBottom + 8;
-        const boardH = Math.max(420, boardTop - boardBot);
-        const board = addBg(p, 'board', 640, boardH, Colors.panel, 16);
-        board.setPosition(0, (boardTop + boardBot) * 0.5, 0);
-
-        const viewH = boardH - 40;
-        const cellH = 96;
-        const gap = 8;
-        const pad = 12;
-        const contentH = pad * 2 + list.length * cellH + Math.max(0, list.length - 1) * gap;
-        const { root: scrollRoot, content } = makeVerticalScroll(board, 'list', 600, viewH, contentH);
-        scrollRoot.setPosition(0, 0, 0);
-
-        list.forEach((v, i) => {
-            const cell = addBg(content, v.id, 580, cellH, '#FFF8EB', 12);
-            cell.setPosition(0, -(pad + cellH * 0.5 + i * (cellH + gap)), 0);
-            strokeRect(cell.getComponent(Graphics)!, 580, cellH, Colors.slotBorder, 1.5, 12);
-            addLabel(cell, 't', v.title, 26, Colors.brown, 360, 36, true).node.setPosition(-80, 18, 0);
-            addLabel(cell, 'm', `${v.source} · ${v.author}`, 18, Colors.text, 400, 28).node.setPosition(-60, -16, 0);
-            addLabel(cell, 'tag', '阅读', 18, Colors.highlight, 100, 28, true).node.setPosition(220, 0, 0);
-            onTapWithoutScroll(cell, () => this.showVerseDetail(v));
+        LibraryPage.mount(this.pageRoot, {
+            tab,
+            onBack: () => this.showHome(),
+            onTab: (t) => this.showLibrary(t),
+            onOpenVerse: (v) => this.showVerseDetail(v),
+            backFrame: this.uiFrames.get('btn_back'),
         });
     }
 
@@ -1426,149 +733,41 @@ export class GameApp extends Component {
     private showSettings() {
         this.clearPage();
         this.page = 'settings';
-        const p = this.pageRoot;
-        const safe = this.placePageHeader(p, '设置', () => this.showHome());
-
-        const list = [
-            {
-                name: '音效',
-                action: () => {
-                    const on = !SaveData.load().soundOn;
-                    SaveData.setSound(on);
-                    this.showSettings();
-                },
-                right: SaveData.load().soundOn ? '开' : '关',
+        SettingsPage.mount(this.pageRoot, {
+            onBack: () => this.showHome(),
+            onToggleSound: () => {
+                const on = !SaveData.load().soundOn;
+                SaveData.setSound(on);
+                this.showSettings();
             },
-            { name: '玩法说明', action: () => this.showHowTo('settings'), right: '>' },
-            { name: '用户协议', action: () => this.showLegalPopup(), right: '>' },
-            { name: '隐私协议', action: () => this.showLegalPopup(), right: '>' },
-            { name: '关于游戏', action: () => this.showAbout(), right: 'i' },
-        ];
-
-        const listTop = safe.headerY - safe.headerBtnSize * 0.5 - 48;
-        list.forEach((item, i) => {
-            const row = addBg(p, `row${i}`, 640, 88, Colors.panel, 12);
-            row.setPosition(0, listTop - i * 100, 0);
-            addLabel(row, 'n', item.name, 28, Colors.title, 400, 40, true).node.setPosition(-80, 0, 0);
-            if (item.name === '音效') {
-                const tog = addBg(
-                    row,
-                    'tog',
-                    72,
-                    36,
-                    SaveData.load().soundOn ? Colors.highlight : Colors.btnDisabled,
-                    18,
-                );
-                tog.setPosition(240, 0, 0);
-            } else {
-                addLabel(row, 'r', item.right, 28, Colors.text, 60, 40).node.setPosition(250, 0, 0);
-            }
-            row.addComponent(BlockInputEvents);
-            row.on(Node.EventType.TOUCH_END, item.action);
+            onHowTo: () => this.showHowTo('settings'),
+            onLegal: () => this.showLegalPopup(),
+            onAbout: () => this.showAbout(),
+            backFrame: this.uiFrames.get('btn_back'),
         });
     }
 
     private showAbout() {
         this.clearPage();
         this.page = 'about';
-        const p = this.pageRoot;
-        const safe = this.placePageHeader(p, '关于游戏', () => this.showSettings());
-        addLabel(p, 'name', `${Brand.full} ${Brand.version}`, 28, Colors.title, 600, 50, true).node.setPosition(0, 200, 0);
-        addLabel(
-            p,
-            'desc',
-            '翻开顶层盲盒得字，按诗句顺序点亮；错字进散页匣',
-            24,
-            Colors.text,
-            600,
-            120,
-        ).node.setPosition(0, 80, 0);
-        addButton(p, 'howto', '查看玩法说明', 280, 64, Colors.btnMain, () => this.showHowTo('about'), {
-            textHex: Colors.brown,
-            fontSize: 26,
-        }).node.setPosition(0, -40, 0);
-        addLabel(p, 'copy', '©2026', 20, Colors.text, 200, 30).node.setPosition(0, safe.contentBottom + 24, 0);
+        AboutPage.mount(this.pageRoot, {
+            onBack: () => this.showSettings(),
+            onHowTo: () => this.showHowTo('about'),
+            backFrame: this.uiFrames.get('btn_back'),
+        });
     }
 
     /** 点亮书架：玩法说明 */
     private showHowTo(from: 'home' | 'settings' | 'about' = 'home') {
         this.clearPage();
         this.page = 'howto';
-        const p = this.pageRoot;
-        const back = () => {
-            if (from === 'settings') this.showSettings();
-            else if (from === 'about') this.showAbout();
-            else this.showHome();
-        };
-        const safe = this.placePageHeader(p, '玩法说明', back);
-
-        const cardW = 640;
-        const boardTop = safe.headerY - safe.headerBtnSize * 0.5 - 20;
-        const boardBot = safe.contentBottom + 8;
-        const viewH = Math.max(420, boardTop - boardBot);
-        const board = addBg(p, 'board', cardW, viewH, Colors.panel, 16);
-        board.setPosition(0, (boardTop + boardBot) * 0.5, 0);
-        strokeRect(board.getComponent(Graphics)!, cardW, viewH, Colors.boardBorder, 2, 16);
-
-        const sections: { title: string; body: string }[] = [
-            {
-                title: '两种玩法',
-                body: `${Brand.modeMatch3}：点顶层盲盒进匣，相同类型凑齐三个自动消除，清空通关。${Brand.modePoem}：按诗句顺序点亮汉字，点错进匣，匣内可再点亮下一字。`,
+        HowToPage.mount(this.pageRoot, {
+            onBack: () => {
+                if (from === 'settings') this.showSettings();
+                else if (from === 'about') this.showAbout();
+                else this.showHome();
             },
-            {
-                title: '诗句变体',
-                body: `${Brand.modeDaily}：每天一首短诗。${Brand.linkBlind}：场上不露字（通关第 3 关解锁）。均不推进主线。`,
-            },
-            {
-                title: '散页匣',
-                body: `匣格有限。${Brand.modeMatch3}靠自动消除腾空；${Brand.modePoem}匣满且点不亮下一字时失败。`,
-            },
-            {
-                title: '道具',
-                body: '撤回 / 提示 / 整理匣。免费次数用完可看短视频补给。',
-            },
-            {
-                title: '广告续关',
-                body: '匣满了可看短视频清空闲字。无账号、无云存档，进度仅本次打开有效。',
-            },
-        ];
-
-        const innerW = 600;
-        const titleH = 34;
-        const gapSec = 18;
-        const bodyLineH = 30;
-        const pad = 20;
-        const measured = sections.map((s) => {
-            const lines = Math.ceil(s.body.length / 16) + 1;
-            const bodyH = Math.max(64, lines * bodyLineH);
-            return { ...s, bodyH, h: titleH + 10 + bodyH };
-        });
-        const contentH =
-            pad * 2 + measured.reduce((s, x) => s + x.h, 0) + Math.max(0, measured.length - 1) * gapSec;
-
-        const { root: scrollRoot, content } = makeVerticalScroll(board, 'howtoScroll', innerW, viewH - 20, contentH);
-        scrollRoot.setPosition(0, 0, 0);
-
-        let cursor = -pad;
-        measured.forEach((s, i) => {
-            const block = makeNode(`sec${i}`, content, innerW - 20, s.h);
-            block.setPosition(0, cursor - s.h * 0.5, 0);
-            const g = block.addComponent(Graphics);
-            g.fillColor = colorFromHex('#C45C3A', 220);
-            g.roundRect(-(innerW - 20) * 0.5 + 8, s.h * 0.5 - titleH + 6, 4, titleH - 10, 2);
-            g.fill();
-            addLabel(block, 't', s.title, 26, Colors.brown, 520, titleH, true).node.setPosition(
-                12,
-                s.h * 0.5 - titleH * 0.5 - 2,
-                0,
-            );
-            const body = addLabel(block, 'b', s.body, 22, Colors.text, innerW - 72, s.bodyH, false);
-            body.node.setPosition(12, -titleH * 0.5 + 4, 0);
-            body.overflow = Label.Overflow.RESIZE_HEIGHT;
-            body.horizontalAlign = Label.HorizontalAlign.LEFT;
-            body.verticalAlign = Label.VerticalAlign.TOP;
-            body.lineHeight = bodyLineH;
-            cursor -= s.h + gapSec;
+            backFrame: this.uiFrames.get('btn_back'),
         });
     }
 
@@ -1576,109 +775,17 @@ export class GameApp extends Component {
     private showLanternRiddle() {
         this.clearPage();
         this.page = 'riddle';
-        const p = this.pageRoot;
-        const safe = this.placePageHeader(p, Brand.linkRiddle, () => this.showHome());
-        const r = riddleByIndex(this.riddleIndex);
-        const total = LANTERN_RIDDLES.length;
-        const lacquer = '#C45C3A';
-        const ink = '#2F2118';
-
-        addLabel(
-            p,
-            'prog',
-            `${this.riddleIndex + 1} / ${total}`,
-            20,
-            Colors.highlight,
-            160,
-            32,
-            true,
-        ).node.setPosition(270, safe.headerY, 0);
-
-        const boardTop = safe.headerY - safe.headerBtnSize * 0.5 - 24;
-        const boardBot = safe.contentBottom + 100;
-        const boardH = Math.max(420, boardTop - boardBot);
-        const board = addBg(p, 'board', 640, boardH, Colors.panel, 18);
-        board.setPosition(0, (boardTop + boardBot) * 0.5, 0);
-        strokeRect(board.getComponent(Graphics)!, 640, boardH, Colors.boardBorder, 2, 18);
-
-        // 小灯笼装饰
-        const lantern = makeNode('lantern', board, 64, 80);
-        lantern.setPosition(0, boardH * 0.5 - 56, 0);
-        const lg = lantern.addComponent(Graphics);
-        lg.fillColor = colorFromHex(lacquer, 235);
-        lg.ellipse(0, 4, 18, 22);
-        lg.fill();
-        lg.fillColor = colorFromHex('#E8C98A', 230);
-        lg.ellipse(0, 22, 16, 4);
-        lg.fill();
-        lg.ellipse(0, -16, 14, 4);
-        lg.fill();
-        lg.strokeColor = colorFromHex('#E8C98A', 200);
-        lg.lineWidth = 1.6;
-        lg.moveTo(0, -18);
-        lg.lineTo(0, -32);
-        lg.stroke();
-        lg.fillColor = colorFromHex('#E8C98A', 220);
-        lg.circle(0, -34, 3);
-        lg.fill();
-        idleSway(lantern, 4, 1.6, 0.1);
-
-        addLabel(board, 'eyebrow', '花灯一盏 · 猜猜看', 18, lacquer, 400, 28, true).node.setPosition(
-            0,
-            boardH * 0.5 - 110,
-            0,
-        );
-
-        const puzzle = addLabel(board, 'puzzle', r.puzzle, 28, ink, 560, 120, true);
-        puzzle.overflow = Label.Overflow.RESIZE_HEIGHT;
-        puzzle.lineHeight = 40;
-        puzzle.node.setPosition(0, boardH * 0.5 - 190, 0);
-
-        const hintLab = addLabel(board, 'hint', '', 22, Colors.text, 520, 48, true);
-        hintLab.node.setPosition(0, 20, 0);
-        const answerLab = addLabel(board, 'answer', '', 30, lacquer, 520, 48, true);
-        answerLab.node.setPosition(0, -40, 0);
-        const noteLab = addLabel(board, 'note', '', 20, Colors.text, 560, 72, true);
-        noteLab.overflow = Label.Overflow.RESIZE_HEIGHT;
-        noteLab.lineHeight = 28;
-        noteLab.node.setPosition(0, -110, 0);
-
-        let revealedHint = false;
-        const applyHint = () => {
-            hintLab.string = `提示：${r.hint}`;
-            revealedHint = true;
-            this.tip('提示已解锁');
-        };
-        const showHint = () => {
-            if (revealedHint) {
-                this.tip('这题已经看过提示了');
-                return;
-            }
-            this.showRiddleHintAd(applyHint);
-        };
-        const showAnswer = () => {
-            answerLab.string = `谜底：${r.answer}`;
-            noteLab.string = r.note;
-            this.tip(`谜底是「${r.answer}」`);
-        };
-        const nextRiddle = () => {
-            this.riddleIndex = (this.riddleIndex + 1) % total;
-            this.showLanternRiddle();
-        };
-
-        const barY = safe.contentBottom + 44;
-        addButton(p, 'hintBtn', '看视频解锁提示', 200, 64, Colors.btnShare, showHint, {
-            fontSize: 20,
-            textHex: Colors.brown,
-        }).node.setPosition(-200, barY, 0);
-        addButton(p, 'ansBtn', '揭晓', 180, 64, Colors.btnMain, showAnswer, {
-            fontSize: 24,
-            textHex: '#FFF8F0',
-        }).node.setPosition(0, barY, 0);
-        addButton(p, 'nextBtn', '下一谜', 180, 64, Colors.btnAd, nextRiddle, {
-            fontSize: 24,
-            textHex: Colors.brown,
-        }).node.setPosition(200, barY, 0);
+        RiddlePage.mount(this.pageRoot, {
+            riddleIndex: this.riddleIndex,
+            onBack: () => this.showHome(),
+            tip: (m) => this.tip(m),
+            requestHintAd: (onGot) => this.showRiddleHintAd(onGot),
+            onNext: () => {
+                this.riddleIndex = (this.riddleIndex + 1) % LANTERN_RIDDLES.length;
+                this.showLanternRiddle();
+            },
+            backFrame: this.uiFrames.get('btn_back'),
+        });
     }
 
     /** 灯谜提示：激励视频解锁 */
@@ -1718,16 +825,6 @@ export class GameApp extends Component {
         ).node.setPosition(-120, -80, 0);
 
         addButton(panel, 'cancel', '取消', 200, 72, Colors.btnAd, close).node.setPosition(120, -80, 0);
-    }
-
-    /** 二级页顶栏：避开刘海/胶囊，统一返回钮位置 */
-    private placePageHeader(parent: Node, title: string, onBack: () => void, safe?: SafeLayout) {
-        const s = safe ?? getSafeLayout();
-        const btnSize = s.headerBtnSize;
-        const y = s.headerY;
-        addCircleBtn(parent, 'back', '←', btnSize, onBack, this.uiFrames.get('btn_back')).setPosition(-300, y, 0);
-        addLabel(parent, 'title', title, 36, Colors.brown, 400, 50, true).node.setPosition(0, y, 0);
-        return s;
     }
 
     // ---------------- Game ----------------
@@ -1851,12 +948,7 @@ export class GameApp extends Component {
 
     /** 让节点不参与 UI 点击检测 */
     private disableHit(node: Node) {
-        const ui = node.getComponent(UITransform);
-        if (ui) {
-            // Cocos 3.8：将命中盒置空，仅保留显示
-            (ui as UITransform & { hitTest?: (p: unknown) => boolean }).hitTest = () => false;
-        }
-        node.children.forEach((c) => this.disableHit(c));
+        pageDisableHit(node);
     }
 
     private bindBoardInput() {
@@ -2514,9 +1606,6 @@ export class GameApp extends Component {
 
     private refreshEconomyHud(tier = difficultyTier(this.currentLevel)) {
         if (!this.economyHudLabel || !this.economyHudLabel.isValid) return;
-        const g = this.game;
-        const min = g.minAdsRequired;
-        const minPart = min > 0 ? ` · 通关需广告≥${min}` : '';
         const mode = playModeTitle(this.playMode);
         const head =
             this.playMode === 'daily'
@@ -2524,7 +1613,7 @@ export class GameApp extends Component {
                 : this.playMode === 'blind'
                   ? `${mode} · 第${this.currentLevel}关`
                   : `第${this.currentLevel}关 · 难度${tier}`;
-        this.economyHudLabel.string = `${head} · 免费道具 ${g.freePropsLeft} · 广告 ${g.adUsed}/${g.adQuota}${minPart}`;
+        this.economyHudLabel.string = head;
     }
 
     private onTool(key: string) {

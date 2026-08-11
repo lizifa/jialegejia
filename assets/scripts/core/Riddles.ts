@@ -1019,3 +1019,89 @@ export function riddleByIndex(i: number): LanternRiddle {
     const n = LANTERN_RIDDLES.length;
     return LANTERN_RIDDLES[((i % n) + n) % n]!;
 }
+
+/** 拆谜底候选（「日 / 太阳」→ 多个可接受答案） */
+export function riddleAnswerTokens(answer: string): string[] {
+    const parts = answer
+        .split(/[\/｜|、,，\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    return parts.length ? parts : [answer.trim()].filter(Boolean);
+}
+
+/** 展示用主答案（选项上显示的那一个） */
+export function riddlePrimaryAnswer(answer: string): string {
+    return riddleAnswerTokens(answer)[0] ?? answer;
+}
+
+function hashSeed(s: string): number {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+}
+
+function mulberry32(seed: number) {
+    return () => {
+        let t = (seed += 0x6d2b79f5);
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+/**
+ * 四选一：1 个正确主答案 + 3 个题库干扰项（同题稳定）
+ */
+export function riddleQuizChoices(riddleIndex: number, count = 4): {
+    options: string[];
+    correct: string;
+    accept: string[];
+} {
+    const r = riddleByIndex(riddleIndex);
+    const accept = riddleAnswerTokens(r.answer);
+    const correct = accept[0] ?? r.answer;
+    const pool: string[] = [];
+    const seen = new Set<string>(accept);
+    for (const item of LANTERN_RIDDLES) {
+        const t = riddlePrimaryAnswer(item.answer);
+        if (!t || seen.has(t)) continue;
+        // 优先同等长度，干扰更像
+        if (t.length === correct.length) pool.push(t);
+        seen.add(t);
+    }
+    // 不够再放宽
+    if (pool.length < count - 1) {
+        seen.clear();
+        accept.forEach((a) => seen.add(a));
+        for (const item of LANTERN_RIDDLES) {
+            const t = riddlePrimaryAnswer(item.answer);
+            if (!t || seen.has(t)) continue;
+            pool.push(t);
+            seen.add(t);
+            if (pool.length >= 80) break;
+        }
+    }
+
+    const rnd = mulberry32(hashSeed(r.id + ':' + riddleIndex));
+    for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        const tmp = pool[i]!;
+        pool[i] = pool[j]!;
+        pool[j] = tmp;
+    }
+
+    const distractors = pool.slice(0, Math.max(0, count - 1));
+    const options = [correct, ...distractors];
+    while (options.length < count) options.push(`？${options.length}`);
+    for (let i = options.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        const tmp = options[i]!;
+        options[i] = options[j]!;
+        options[j] = tmp;
+    }
+    return { options: options.slice(0, count), correct, accept };
+}
+
