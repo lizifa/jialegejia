@@ -27,10 +27,10 @@ export const Colors = {
 
 /** 对外品牌与按钮文案（首页 / 关于 / 分享） */
 export const Brand = {
-    name: '诗了个消',
-    tagline: '盲盒诗匣',
+    name: '诗匣',
+    tagline: '翻开见诗',
     hook: '两种玩法 · 清匣消除 · 点亮诗句',
-    full: '诗了个消 · 盲盒诗匣',
+    full: '诗匣 · 翻开见诗',
     version: 'v1.0.0',
     modePoem: '点亮诗句',
     modePoemSub: (lv: number, title: string) => `按诗句点亮　·　第 ${lv} 关「${title}」`,
@@ -39,6 +39,7 @@ export const Brand = {
     modeDaily: '每日一诗',
     modeDailySub: (title: string) => `今日「${title}」· 短关速背`,
     linkBlind: '盲翻诗',
+    linkRiddle: '猜灯谜',
     linkLevels: '选关',
     linkCatalog: '图鉴',
     linkLibrary: '诗藏',

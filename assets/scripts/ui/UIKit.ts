@@ -483,40 +483,43 @@ export function setOpacity(node: Node, a: number): void {
 }
 
 /**
- * 场上盲盒顶面汉字：把正放方框仿射到顶面菱形（相对框摆正）。
- * 顶面菱形对角线水平/竖直（见 gen_tile_sprites.iso_params），
- * 故：字先转 45° 成菱形，再按 w:h 压成与盒盖同形。
+ * 等距顶面汉字（与盲盒盖同一套仿射）：
+ * 字先转 45°，再按顶面菱形 w:h 压扁 —— 首页诗匣 / 场上共用。
  */
-export function mountEmbeddedBoardGlyph(
-    tileNode: Node,
+export function mountIsoFaceGlyph(
+    parent: Node,
     glyph: string,
-    opts?: { flash?: boolean; fontSize?: number },
+    opts?: {
+        flash?: boolean;
+        fontSize?: number;
+        /** 参考盒边长，默认 Design.tileSize；首页可缩小 */
+        faceSize?: number;
+        color?: string;
+        name?: string;
+        /** 相对父节点偏移（盲盒顶面中心用 y≈tileSize*0.22） */
+        offsetY?: number;
+    },
 ): Node {
     const flash = !!opts?.flash;
     const fontSize = opts?.fontSize ?? 30;
-    // 与贴图一致的顶面半对角线比例（勿用模块顶层 const，避免打包时序问题）
+    const faceSize = opts?.faceSize ?? Design.tileSize;
     const faceW = 0.52;
     const faceH = 0.3;
     const inset = 0.58;
-    const halfDiagX = Design.tileSize * faceW * inset;
-    const halfDiagY = Design.tileSize * faceH * inset;
-    // 字号方框边长（旋转 45° 后对角线 = side * √2）
-    const side = Math.max(36, fontSize + 10);
+    const halfDiagX = faceSize * faceW * inset;
+    const halfDiagY = faceSize * faceH * inset;
+    const side = Math.max(28, fontSize + 8);
+    const name = opts?.name ?? 'GlyphEmb';
 
-    const legacy = tileNode.getChildByName('GlyphLab');
-    if (legacy?.isValid) legacy.destroy();
-    const old = tileNode.getChildByName('GlyphEmb');
+    const old = parent.getChildByName(name);
     if (old?.isValid) old.destroy();
 
-    // GlyphEmb：定位到顶面中心，并按菱形纵横比缩放
-    const root = makeNode('GlyphEmb', tileNode, side, side);
+    const root = makeNode(name, parent, side, side);
     const diag = side * Math.SQRT2;
     root.setScale((2 * halfDiagX) / diag, (2 * halfDiagY) / diag, 1);
     root.angle = 0;
-    // 顶面中心约在贴图上方（top_z ≈ d*0.55）
-    root.setPosition(0, Design.tileSize * 0.22, 0);
+    root.setPosition(0, opts?.offsetY ?? 0, 0);
 
-    // Rot：+45° 使方框边与菱形边平行（相对框摆正）
     const rot = makeNode('Rot', root, side, side);
     rot.angle = 45;
     rot.setScale(1, 1, 1);
@@ -527,7 +530,7 @@ export function mountEmbeddedBoardGlyph(
         'Ink',
         glyph,
         fontSize,
-        flash ? Colors.highlight : '#5C4030',
+        opts?.color ?? (flash ? Colors.highlight : '#5C4030'),
         side,
         side,
         false,
@@ -553,10 +556,29 @@ export function mountEmbeddedBoardGlyph(
     const out = root.getComponent(UITransform);
     if (out) (out as UITransform & { hitTest: () => boolean }).hitTest = () => false;
 
-    root.setSiblingIndex(tileNode.children.length - 1);
+    root.setSiblingIndex(parent.children.length - 1);
     root.active = true;
     setOpacity(root, flash ? 255 : 248);
     return root;
+}
+
+/**
+ * 场上盲盒顶面汉字：把正放方框仿射到顶面菱形（相对框摆正）。
+ */
+export function mountEmbeddedBoardGlyph(
+    tileNode: Node,
+    glyph: string,
+    opts?: { flash?: boolean; fontSize?: number },
+): Node {
+    const legacy = tileNode.getChildByName('GlyphLab');
+    if (legacy?.isValid) legacy.destroy();
+    return mountIsoFaceGlyph(tileNode, glyph, {
+        flash: opts?.flash,
+        fontSize: opts?.fontSize,
+        faceSize: Design.tileSize,
+        name: 'GlyphEmb',
+        offsetY: Design.tileSize * 0.22,
+    });
 }
 
 export function hideEmbeddedBoardGlyph(tileNode: Node): void {
@@ -656,6 +678,26 @@ export function slideUpIn(node: Node, delay = 0, fromY = 36): void {
             { easing: 'backOut' },
         )
         .start();
+}
+
+/** 入场：轻柔上浮（诗匣气质，无回弹） */
+export function softRiseIn(node: Node, delay = 0, fromY = 20): void {
+    const base = node.position.clone();
+    node.setPosition(base.x, base.y - fromY, 0);
+    const op = node.getComponent(UIOpacity) || node.addComponent(UIOpacity);
+    op.opacity = 0;
+    tween(op).delay(delay).to(0.36, { opacity: 255 }, { easing: 'sineOut' }).start();
+    tween(node)
+        .delay(delay)
+        .to(0.42, { position: base }, { easing: 'sineOut' })
+        .start();
+}
+
+/** 入场：淡入 */
+export function softFadeIn(node: Node, delay = 0, dur = 0.38): void {
+    const op = node.getComponent(UIOpacity) || node.addComponent(UIOpacity);
+    op.opacity = 0;
+    tween(op).delay(delay).to(dur, { opacity: 255 }, { easing: 'sineOut' }).start();
 }
 
 /** 入场：左右滑入 */
