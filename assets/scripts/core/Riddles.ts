@@ -1,5 +1,8 @@
 /** 猜灯谜：1000 条字谜 / 诗谜 / 成语谜 */
 
+import { isMidAutumn } from './Festival';
+import { MID_AUTUMN_RIDDLES } from './MidAutumnRiddles';
+
 export type LanternRiddle = {
     id: string;
     /** 谜面 */
@@ -1015,9 +1018,18 @@ export const LANTERN_RIDDLES: LanternRiddle[] = [
     { id: 'r1000', puzzle: '情去掉「忄」（打一字）', hint: '去偏旁', answer: '青', note: '情去忄得青。' },
 ];
 
+export function riddlePool(): LanternRiddle[] {
+    if (isMidAutumn() && MID_AUTUMN_RIDDLES.length) {
+        // 节日包在前，再接总库，既有节日味又不浪费千题
+        return [...MID_AUTUMN_RIDDLES, ...LANTERN_RIDDLES];
+    }
+    return LANTERN_RIDDLES;
+}
+
 export function riddleByIndex(i: number): LanternRiddle {
-    const n = LANTERN_RIDDLES.length;
-    return LANTERN_RIDDLES[((i % n) + n) % n]!;
+    const list = riddlePool();
+    const n = list.length;
+    return list[((i % n) + n) % n]!;
 }
 
 /** 拆谜底候选（「日 / 太阳」→ 多个可接受答案） */
@@ -1065,18 +1077,17 @@ export function riddleQuizChoices(riddleIndex: number, count = 4): {
     const correct = accept[0] ?? r.answer;
     const pool: string[] = [];
     const seen = new Set<string>(accept);
-    for (const item of LANTERN_RIDDLES) {
+    const source = riddlePool();
+    for (const item of source) {
         const t = riddlePrimaryAnswer(item.answer);
         if (!t || seen.has(t)) continue;
-        // 优先同等长度，干扰更像
         if (t.length === correct.length) pool.push(t);
         seen.add(t);
     }
-    // 不够再放宽
     if (pool.length < count - 1) {
         seen.clear();
         accept.forEach((a) => seen.add(a));
-        for (const item of LANTERN_RIDDLES) {
+        for (const item of source) {
             const t = riddlePrimaryAnswer(item.answer);
             if (!t || seen.has(t)) continue;
             pool.push(t);

@@ -1,5 +1,6 @@
 import { _decorator, Component, Graphics, Node, Tween, Vec3, tween } from 'cc';
 import { Design } from '../../core/Config';
+import { isMidAutumn, MidAutumnColors } from '../../core/Festival';
 import { SafeLayout } from '../../core/SafeArea';
 import { colorFromHex, idleSway, makeNode } from '../UIKit';
 import { disableHit } from './PageKit';
@@ -7,13 +8,15 @@ import { disableHit } from './PageKit';
 const { ccclass } = _decorator;
 
 export type PageChromeOpts = {
-    /** 是否绘制顶部倒挂饰物（灯笼/猴子），默认 true */
+    /** 是否绘制顶部倒挂饰物（灯笼/猴子/月兔），默认 true */
     hangings?: boolean;
+    /** 挂饰整体下移（对局页避开刘海/状态栏） */
+    hangDrop?: number;
 };
 
 /**
  * 各页共享氛围层：暖宣纸底 + 顶部挂饰
- * 挂到 pageRoot 最底层，不抢交互
+ * 中秋：月晕底 + 月灯/玉兔
  */
 @ccclass('PageChrome')
 export class PageChrome extends Component {
@@ -27,9 +30,13 @@ export class PageChrome extends Component {
 
     private build(safe: SafeLayout, opts?: PageChromeOpts) {
         const visH = safe.visH;
-        this.drawAtmosphere(this.node, visH);
+        const fest = isMidAutumn();
+        if (fest) this.drawMidAutumnAtmosphere(this.node, visH);
+        else this.drawAtmosphere(this.node, visH);
         if (opts?.hangings !== false) {
-            this.drawHangings(this.node, safe);
+            const drop = opts?.hangDrop ?? 0;
+            if (fest) this.drawMidAutumnHangings(this.node, safe, drop);
+            else this.drawHangings(this.node, safe, drop);
         }
     }
 
@@ -75,8 +82,46 @@ export class PageChrome extends Component {
         disableHit(root);
     }
 
-    private drawHangings(parent: Node, safe: SafeLayout) {
-        const top = safe.half - Math.max(8, safe.topInset * 0.15);
+    /** 中秋：浅紫夜洗 + 右上月晕 */
+    private drawMidAutumnAtmosphere(parent: Node, visH: number) {
+        const root = makeNode('atmosphere', parent, Design.width, visH);
+        const g = root.addComponent(Graphics);
+        g.fillColor = colorFromHex('#F4EFE6');
+        g.rect(-Design.width * 0.5, -visH * 0.5, Design.width, visH);
+        g.fill();
+        g.fillColor = colorFromHex(MidAutumnColors.nightWash, 70);
+        g.ellipse(0, visH * 0.38, 460, 140);
+        g.fill();
+        g.fillColor = colorFromHex(MidAutumnColors.moon, 55);
+        g.circle(210, visH * 0.36, 92);
+        g.fill();
+        g.fillColor = colorFromHex(MidAutumnColors.moon, 120);
+        g.circle(210, visH * 0.36, 54);
+        g.fill();
+        g.fillColor = colorFromHex('#FFF8E8', 200);
+        g.circle(210, visH * 0.36, 38);
+        g.fill();
+        g.fillColor = colorFromHex(MidAutumnColors.moonEdge, 40);
+        g.ellipse(-40, -visH * 0.44, 360, 80);
+        g.fill();
+        // 细桂影点
+        [
+            [-260, 300],
+            [280, 220],
+            [-200, -360],
+            [160, -300],
+            [-300, 40],
+            [300, -40],
+        ].forEach(([x, y]) => {
+            g.fillColor = colorFromHex(MidAutumnColors.gold, 55);
+            g.circle(x, y * (visH / 1280), 2.2);
+            g.fill();
+        });
+        disableHit(root);
+    }
+
+    private drawHangings(parent: Node, safe: SafeLayout, hangDrop = 0) {
+        const top = safe.half - Math.max(8, safe.topInset * 0.15) - hangDrop;
         const items: Array<{ x: number; kind: 'lantern' | 'tassel' | 'knot'; len: number }> = [
             { x: -268, kind: 'lantern', len: 52 },
             { x: -198, kind: 'tassel', len: 68 },
@@ -149,6 +194,88 @@ export class PageChrome extends Component {
         });
 
         this.mountHangingMonkey(parent, -108, top);
+    }
+
+    private drawMidAutumnHangings(parent: Node, safe: SafeLayout, hangDrop = 0) {
+        const top = safe.half - Math.max(8, safe.topInset * 0.15) - hangDrop;
+        const items: Array<{ x: number; kind: 'moonLantern' | 'tassel' | 'osmanthus'; len: number }> = [
+            { x: -268, kind: 'moonLantern', len: 56 },
+            { x: -198, kind: 'tassel', len: 68 },
+            { x: 210, kind: 'osmanthus', len: 58 },
+            { x: 268, kind: 'moonLantern', len: 50 },
+            { x: 118, kind: 'tassel', len: 48 },
+        ];
+
+        items.forEach((it, idx) => {
+            const root = makeNode(`hang${idx}`, parent, 48, it.len + 36);
+            root.setPosition(it.x, top - it.len * 0.35, 0);
+            const g = root.addComponent(Graphics);
+            g.strokeColor = colorFromHex('#8B5A32', 160);
+            g.lineWidth = 1.6;
+            g.moveTo(0, it.len * 0.5);
+            g.lineTo(0, it.len * 0.5 - 16);
+            g.stroke();
+
+            if (it.kind === 'moonLantern') {
+                // 圆形月灯：米黄罩 + 朱红边 + 月牙窗
+                g.fillColor = colorFromHex(MidAutumnColors.moon, 245);
+                g.circle(0, it.len * 0.5 - 36, 14);
+                g.fill();
+                g.strokeColor = colorFromHex(MidAutumnColors.lacquer, 220);
+                g.lineWidth = 2;
+                g.circle(0, it.len * 0.5 - 36, 14);
+                g.stroke();
+                g.fillColor = colorFromHex(MidAutumnColors.gold, 230);
+                g.ellipse(0, it.len * 0.5 - 20, 12, 3);
+                g.fill();
+                g.ellipse(0, it.len * 0.5 - 52, 11, 3);
+                g.fill();
+                g.fillColor = colorFromHex(MidAutumnColors.moonEdge, 200);
+                g.arc(2, it.len * 0.5 - 36, 7, Math.PI * 0.25, Math.PI * 1.55, false);
+                g.lineTo(2, it.len * 0.5 - 36);
+                g.close();
+                g.fill();
+                g.strokeColor = colorFromHex(MidAutumnColors.gold, 200);
+                g.lineWidth = 1.4;
+                g.moveTo(0, it.len * 0.5 - 54);
+                g.lineTo(0, it.len * 0.5 - 66);
+                g.stroke();
+                g.fillColor = colorFromHex(MidAutumnColors.gold, 210);
+                g.circle(0, it.len * 0.5 - 68, 2.5);
+                g.fill();
+            } else if (it.kind === 'osmanthus') {
+                g.fillColor = colorFromHex(MidAutumnColors.gold, 200);
+                g.circle(0, it.len * 0.5 - 28, 5);
+                g.fill();
+                g.circle(-5, it.len * 0.5 - 34, 3.5);
+                g.circle(5, it.len * 0.5 - 34, 3.5);
+                g.circle(0, it.len * 0.5 - 40, 3);
+                g.fill();
+                g.strokeColor = colorFromHex('#6B8E4E', 180);
+                g.lineWidth = 1.4;
+                g.moveTo(0, it.len * 0.5 - 22);
+                g.lineTo(-4, it.len * 0.5 - 42);
+                g.moveTo(0, it.len * 0.5 - 22);
+                g.lineTo(5, it.len * 0.5 - 40);
+                g.stroke();
+            } else {
+                g.fillColor = colorFromHex(MidAutumnColors.lacquer, 210);
+                g.roundRect(-6, it.len * 0.5 - 28, 12, 10, 4);
+                g.fill();
+                [-5, -2, 1, 4].forEach((sx, si) => {
+                    g.strokeColor = colorFromHex(si % 2 === 0 ? MidAutumnColors.lacquer : MidAutumnColors.gold, 190);
+                    g.lineWidth = 1.3;
+                    g.moveTo(sx, it.len * 0.5 - 28);
+                    g.lineTo(sx + (si % 2 === 0 ? -2 : 2), it.len * 0.5 - 28 - (22 + si * 4));
+                    g.stroke();
+                });
+            }
+
+            disableHit(root);
+            idleSway(root, 3.5 + (idx % 3), 1.6 + (idx % 2) * 0.25, idx * 0.12);
+        });
+
+        this.mountHangingRabbit(parent, -108, top);
     }
 
     private mountHangingMonkey(parent: Node, x: number, topY: number) {
@@ -361,6 +488,150 @@ export class PageChrome extends Component {
         tween(tail)
             .to(0.5, { eulerAngles: new Vec3(0, 0, -16) }, { easing: 'sineInOut' })
             .to(0.5, { eulerAngles: new Vec3(0, 0, 12) }, { easing: 'sineInOut' })
+            .union()
+            .repeatForever()
+            .start();
+    }
+
+    /** 中秋：倒挂玉兔（抱月饼） */
+    private mountHangingRabbit(parent: Node, x: number, topY: number) {
+        const root = makeNode('hangRabbit', parent, 96, 176);
+        root.setPosition(x, topY - 52, 0);
+
+        const rope = makeNode('rope', root, 28, 100);
+        rope.setPosition(0, 64, 0);
+        const rg = rope.addComponent(Graphics);
+        rg.strokeColor = colorFromHex('#8B5A32', 180);
+        rg.lineWidth = 2.4;
+        rg.moveTo(0, 44);
+        rg.lineTo(0, -28);
+        rg.stroke();
+        rg.fillColor = colorFromHex(MidAutumnColors.gold, 220);
+        rg.circle(0, 18, 2.2);
+        rg.circle(0, -4, 2.2);
+        rg.fill();
+
+        const swing = makeNode('swing', root, 90, 120);
+        swing.setPosition(0, -28, 0);
+
+        const rabbit = makeNode('rabbit', swing, 90, 120);
+        const g = rabbit.addComponent(Graphics);
+        const fur = '#F5F0E6';
+        const earIn = '#F2C4B8';
+        const ink = '#3A2A22';
+        const blush = '#FFB0A0';
+
+        // 长耳（可摆动）
+        const earL = makeNode('earL', rabbit, 16, 40);
+        earL.setPosition(-8, 28, 0);
+        const elg = earL.addComponent(Graphics);
+        elg.fillColor = colorFromHex(fur);
+        elg.ellipse(0, 0, 5, 16);
+        elg.fill();
+        elg.fillColor = colorFromHex(earIn, 200);
+        elg.ellipse(0, 2, 2.4, 10);
+        elg.fill();
+
+        const earR = makeNode('earR', rabbit, 16, 40);
+        earR.setPosition(8, 28, 0);
+        const erg = earR.addComponent(Graphics);
+        erg.fillColor = colorFromHex(fur);
+        erg.ellipse(0, 0, 5, 16);
+        erg.fill();
+        erg.fillColor = colorFromHex(earIn, 200);
+        erg.ellipse(0, 2, 2.4, 10);
+        erg.fill();
+
+        // 头身
+        g.fillColor = colorFromHex(fur);
+        g.circle(0, 4, 14);
+        g.fill();
+        g.circle(0, -22, 16);
+        g.fill();
+
+        // 腮红 / 鼻口
+        g.fillColor = colorFromHex(blush, 140);
+        g.ellipse(-8, -1, 3.5, 2.2);
+        g.ellipse(8, -1, 3.5, 2.2);
+        g.fill();
+        g.fillColor = colorFromHex('#E8A090');
+        g.circle(0, -2, 2);
+        g.fill();
+        g.strokeColor = colorFromHex(ink, 180);
+        g.lineWidth = 1.1;
+        g.moveTo(0, -3.5);
+        g.lineTo(-3, -6);
+        g.moveTo(0, -3.5);
+        g.lineTo(3, -6);
+        g.stroke();
+
+        // 月饼
+        g.fillColor = colorFromHex(MidAutumnColors.moonEdge, 240);
+        g.circle(0, -26, 8);
+        g.fill();
+        g.strokeColor = colorFromHex(MidAutumnColors.lacquer, 200);
+        g.lineWidth = 1.2;
+        g.circle(0, -26, 8);
+        g.stroke();
+        g.fillColor = colorFromHex(MidAutumnColors.lacquer, 180);
+        g.circle(0, -26, 2.2);
+        g.fill();
+
+        // 爪
+        g.fillColor = colorFromHex(fur);
+        g.ellipse(-12, -18, 5, 4);
+        g.ellipse(12, -18, 5, 4);
+        g.fill();
+
+        const eyes = makeNode('eyes', rabbit, 40, 14);
+        eyes.setPosition(0, 6, 0);
+        const eg = eyes.addComponent(Graphics);
+        eg.fillColor = colorFromHex(ink);
+        eg.ellipse(-5, 0, 2.4, 3.2);
+        eg.ellipse(5, 0, 2.4, 3.2);
+        eg.fill();
+        eg.fillColor = colorFromHex('#FFFFFF', 235);
+        eg.circle(-5.6, 1, 0.9);
+        eg.circle(4.4, 1, 0.9);
+        eg.fill();
+
+        disableHit(root);
+        idleSway(root, 5.2, 1.9, 0.1);
+
+        tween(eyes)
+            .delay(1.8)
+            .to(0.05, { scale: new Vec3(1, 0.12, 1) })
+            .to(0.08, { scale: new Vec3(1, 1, 1) })
+            .delay(2.6)
+            .union()
+            .repeatForever()
+            .start();
+
+        tween(rabbit)
+            .to(1.2, { eulerAngles: new Vec3(0, 0, 2.8) }, { easing: 'sineInOut' })
+            .to(1.2, { eulerAngles: new Vec3(0, 0, -2.8) }, { easing: 'sineInOut' })
+            .union()
+            .repeatForever()
+            .start();
+
+        const base = swing.position.clone();
+        tween(swing)
+            .to(1.0, { position: new Vec3(base.x, base.y - 2.2, 0) }, { easing: 'sineInOut' })
+            .to(1.0, { position: base }, { easing: 'sineInOut' })
+            .union()
+            .repeatForever()
+            .start();
+
+        tween(earL)
+            .to(0.7, { eulerAngles: new Vec3(0, 0, -8) }, { easing: 'sineInOut' })
+            .to(0.7, { eulerAngles: new Vec3(0, 0, 6) }, { easing: 'sineInOut' })
+            .union()
+            .repeatForever()
+            .start();
+        tween(earR)
+            .delay(0.15)
+            .to(0.7, { eulerAngles: new Vec3(0, 0, 8) }, { easing: 'sineInOut' })
+            .to(0.7, { eulerAngles: new Vec3(0, 0, -6) }, { easing: 'sineInOut' })
             .union()
             .repeatForever()
             .start();

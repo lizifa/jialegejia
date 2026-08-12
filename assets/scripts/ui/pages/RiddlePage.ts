@@ -1,6 +1,7 @@
 import { _decorator, Component, Graphics, Label, Node, SpriteFrame, tween, Vec3 } from 'cc';
 import { Brand, Colors } from '../../core/Config';
-import { LANTERN_RIDDLES, riddleByIndex, riddleQuizChoices } from '../../core/Riddles';
+import { isMidAutumn, MidAutumnCopy, MidAutumnColors } from '../../core/Festival';
+import { riddleByIndex, riddlePool, riddleQuizChoices } from '../../core/Riddles';
 import { getSafeLayout } from '../../core/SafeArea';
 import {
     addBg,
@@ -49,12 +50,14 @@ export class RiddlePage extends Component {
         const p = this.node;
         const safe = getSafeLayout();
         PageChrome.attach(p, safe);
-        placePageHeader(p, Brand.linkRiddle, ctx.onBack, { safe, backFrame: ctx.backFrame });
+        const fest = isMidAutumn();
+        const headerTitle = fest ? MidAutumnCopy.riddleTitle : Brand.linkRiddle;
+        placePageHeader(p, headerTitle, ctx.onBack, { safe, backFrame: ctx.backFrame });
 
         const r = riddleByIndex(ctx.riddleIndex);
         const quiz = riddleQuizChoices(ctx.riddleIndex, 4);
-        const total = LANTERN_RIDDLES.length;
-        const lacquer = '#C45C3A';
+        const total = riddlePool().length;
+        const lacquer = fest ? MidAutumnColors.lacquer : '#C45C3A';
         const ink = '#2F2118';
 
         addLabel(
@@ -78,14 +81,34 @@ export class RiddlePage extends Component {
         const lantern = makeNode('lantern', board, 64, 80);
         lantern.setPosition(0, boardH * 0.5 - 48, 0);
         const lg = lantern.addComponent(Graphics);
-        lg.fillColor = colorFromHex(lacquer, 235);
-        lg.ellipse(0, 4, 18, 22);
-        lg.fill();
-        lg.fillColor = colorFromHex('#E8C98A', 230);
-        lg.ellipse(0, 22, 16, 4);
-        lg.fill();
-        lg.ellipse(0, -16, 14, 4);
-        lg.fill();
+        if (fest) {
+            lg.fillColor = colorFromHex(MidAutumnColors.moon, 245);
+            lg.circle(0, 4, 20);
+            lg.fill();
+            lg.strokeColor = colorFromHex(lacquer, 220);
+            lg.lineWidth = 2;
+            lg.circle(0, 4, 20);
+            lg.stroke();
+            lg.fillColor = colorFromHex(MidAutumnColors.gold, 230);
+            lg.ellipse(0, 22, 16, 4);
+            lg.fill();
+            lg.ellipse(0, -16, 14, 4);
+            lg.fill();
+            lg.fillColor = colorFromHex(MidAutumnColors.moonEdge, 200);
+            lg.arc(3, 4, 10, Math.PI * 0.25, Math.PI * 1.55, false);
+            lg.lineTo(3, 4);
+            lg.close();
+            lg.fill();
+        } else {
+            lg.fillColor = colorFromHex(lacquer, 235);
+            lg.ellipse(0, 4, 18, 22);
+            lg.fill();
+            lg.fillColor = colorFromHex('#E8C98A', 230);
+            lg.ellipse(0, 22, 16, 4);
+            lg.fill();
+            lg.ellipse(0, -16, 14, 4);
+            lg.fill();
+        }
         lg.strokeColor = colorFromHex('#E8C98A', 200);
         lg.lineWidth = 1.6;
         lg.moveTo(0, -18);
@@ -96,7 +119,8 @@ export class RiddlePage extends Component {
         lg.fill();
         idleSway(lantern, 4, 1.6, 0.1);
 
-        addLabel(board, 'eyebrow', '花灯一盏 · 四选一', 18, lacquer, 400, 28, true).node.setPosition(
+        const eyebrow = fest ? MidAutumnCopy.riddleEyebrow : '花灯一盏 · 四选一';
+        addLabel(board, 'eyebrow', eyebrow, 18, lacquer, 400, 28, true).node.setPosition(
             0,
             boardH * 0.5 - 100,
             0,

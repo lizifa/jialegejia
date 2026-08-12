@@ -22,6 +22,7 @@ import {
 } from '../UIKit';
 import { PageChrome } from './PageChrome';
 import { mountPageRoot } from './PageKit';
+import { isMidAutumn, MidAutumnCopy, MidAutumnColors } from '../../core/Festival';
 
 const { ccclass } = _decorator;
 
@@ -111,14 +112,21 @@ export class HomePage extends Component {
         const footY = cursor - footH * 0.5;
 
         const ink = '#2F2118';
-        const lacquer = '#C45C3A';
+        const lacquer = isMidAutumn() ? MidAutumnColors.lacquer : '#C45C3A';
+        const tagline = isMidAutumn() ? MidAutumnCopy.tagline : Brand.tagline;
+        const riddleName = isMidAutumn() ? MidAutumnCopy.riddleTitle : Brand.linkRiddle;
 
         const brandLab = addLabel(p, 'brand', Brand.name, 54, ink, 640, brandH, true);
         brandLab.spacingX = 12;
         const brand = brandLab.node;
         brand.setPosition(0, brandY, 0);
 
-        const tagLab = addLabel(p, 'tag', Brand.tagline, 16, lacquer, 520, tagH, true);
+        if (isMidAutumn()) {
+            const badge = addLabel(p, 'festBadge', MidAutumnCopy.badge, 14, MidAutumnColors.gold, 64, 22, true);
+            badge.node.setPosition(Brand.name.length * 28 + 8, brandY + 14, 0);
+        }
+
+        const tagLab = addLabel(p, 'tag', tagline, 16, lacquer, 520, tagH, true);
         tagLab.spacingX = 4;
         tagLab.node.setPosition(0, tagY, 0);
 
@@ -140,11 +148,11 @@ export class HomePage extends Component {
             },
             {
                 name: Brand.modeDaily,
-                accent: '#6FBE88',
+                accent: isMidAutumn() ? MidAutumnColors.gold : '#6FBE88',
                 fn: () => ctx.startPlayMode('daily', dailyId),
             },
             {
-                name: Brand.linkRiddle,
+                name: riddleName,
                 accent: '#D4A017',
                 fn: () => ctx.showLanternRiddle(),
             },

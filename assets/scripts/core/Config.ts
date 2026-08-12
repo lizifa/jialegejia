@@ -1,5 +1,7 @@
 /** 全局配色与常量 —— 严格对齐开发文档 */
 
+import { isMidAutumn, MID_AUTUMN_DAILY_LEVELS } from './Festival';
+
 export const Colors = {
     bg: '#FFF8EB',
     panel: '#FFFFFF',
@@ -163,9 +165,12 @@ export function isPoemFamily(mode: PlayMode): boolean {
     return mode === 'poem' || mode === 'daily' || mode === 'blind';
 }
 
-/** 今日一句：按东八区日期轮换 1–10 关（偏短、好分享） */
+/** 今日一句：按东八区日期轮换；中秋优先月亮诗关卡 */
 export function dailyLevelId(now = Date.now()): number {
     const day = Math.floor((now + 8 * 3600 * 1000) / 86400000);
+    if (isMidAutumn(now) && MID_AUTUMN_DAILY_LEVELS.length) {
+        return MID_AUTUMN_DAILY_LEVELS[day % MID_AUTUMN_DAILY_LEVELS.length]!;
+    }
     return (day % 10) + 1;
 }
 

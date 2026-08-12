@@ -47,7 +47,8 @@ import {
     Verse,
     VerseKind,
 } from './core/Literature';
-import { LANTERN_RIDDLES } from './core/Riddles';
+import { riddlePool } from './core/Riddles';
+import { isMidAutumn, MidAutumnCopy, MidAutumnColors } from './core/Festival';
 import {
     addBg,
     addButton,
@@ -68,6 +69,20 @@ import {
 } from './ui/UIKit';
 import { TileItem } from './ui/TileItem';
 import { flashVerseHud, playLineBrush, playVerseInkReveal, playVerseSeal } from './ui/VerseFX';
+import {
+    attachScrollMeta,
+    mountPoemScroll,
+    paintScrollNextSeal,
+    playPoemScrollOpen,
+    readScrollMeta,
+} from './ui/PoemScrollFX';
+import {
+    mountLevelPlaque,
+    mountScholarBackdrop,
+    mountScholarTools,
+    mountScholarTray,
+    wrapScholarUndo,
+} from './ui/GameScholarFX';
 import {
     AboutPage,
     CatalogPage,
@@ -97,6 +112,8 @@ export class GameApp extends Component {
     private leisureMode = false;
     /** 猜灯谜当前题号 */
     private riddleIndex = 0;
+    /** 中秋首页 tip 本会话只弹一次 */
+    private midAutumnHomeTipShown = false;
     private tileNodes = new Map<string, Node>();
     /** 散页匣格位节点 */
     private slotNodes: Node[] = [];
@@ -105,7 +122,7 @@ export class GameApp extends Component {
     private parkLayer!: Node;
     private hudLayer!: Node;
     private busy = false;
-    private undoBtn: ReturnType<typeof addButton> | null = null;
+    private undoBtn: { setEnabled: (on: boolean) => void; node?: Node } | null = null;
     private levelCache = new Map<number, LevelJson>();
     private tipLabel: Label | null = null;
     private bootBar: Graphics | null = null;
@@ -125,7 +142,9 @@ export class GameApp extends Component {
     private poemHudProgressLabel: Label | null = null;
     private poemHudBar: Graphics | null = null;
     private poemHudRoot: Node | null = null;
+    private poemNextPill: Graphics | null = null;
     private economyHudLabel: Label | null = null;
+    private economyHudRoot: Node | null = null;
     /** 按匣格实测，保证入匣不撑破 */
     private slotFitScale = Design.slotScale;
     private mockLayout: {
@@ -167,7 +186,9 @@ export class GameApp extends Component {
         this.poemHudProgressLabel = null;
         this.poemHudBar = null;
         this.poemHudRoot = null;
+        this.poemNextPill = null;
         this.economyHudLabel = null;
+        this.economyHudRoot = null;
         this.poemChars = [];
         this.poemRevealed = 0;
     }
@@ -544,14 +565,22 @@ export class GameApp extends Component {
             showSettings: () => this.showSettings(),
             showLegalPopup: () => this.showLegalPopup(),
         });
+        if (isMidAutumn() && !this.midAutumnHomeTipShown) {
+            this.midAutumnHomeTipShown = true;
+            this.scheduleOnce(() => this.tip(MidAutumnCopy.homeTip), 0.6);
+        }
     }
 
     private startPlayMode(mode: PlayMode, levelId: number) {
         this.playMode = mode;
         this.leisureMode = mode !== 'poem';
         if (mode === 'match3') this.tip(`${Brand.modeMatch3} · 凑齐三个相同盲盒`);
-        else if (mode === 'daily') this.tip(`${Brand.modeDaily} · ${getVerseForLevel(levelId).title}`);
-        else if (mode === 'blind') this.tip(`${Brand.linkBlind} · 场上不露字`);
+        else if (mode === 'daily') {
+            const tip = isMidAutumn()
+                ? `${MidAutumnCopy.dailyHint} · ${getVerseForLevel(levelId).title}`
+                : `${Brand.modeDaily} · ${getVerseForLevel(levelId).title}`;
+            this.tip(tip);
+        } else if (mode === 'blind') this.tip(`${Brand.linkBlind} · 场上不露字`);
         else this.tip(`${Brand.modePoem} · ${getVerseForLevel(levelId).title}`);
         this.enterGame(levelId, mode);
         if (mode === 'daily' || mode === 'match3') {
@@ -781,7 +810,7 @@ export class GameApp extends Component {
             tip: (m) => this.tip(m),
             requestHintAd: (onGot) => this.showRiddleHintAd(onGot),
             onNext: () => {
-                this.riddleIndex = (this.riddleIndex + 1) % LANTERN_RIDDLES.length;
+                this.riddleIndex = (this.riddleIndex + 1) % riddlePool().length;
                 this.showLanternRiddle();
             },
             backFrame: this.uiFrames.get('btn_back'),
@@ -839,17 +868,18 @@ export class GameApp extends Component {
         const data = this.getLevel(levelId);
         const verse = getVerseForLevel(data.id);
 
+        const safe = getSafeLayout();
+        // 书生意气：水墨月夜 + 花灯（对局专用氛围）
+        mountScholarBackdrop(p, safe, 46);
+
         this.hudLayer = makeNode('hud', p);
 
-        // —— 顶栏仅返回（与胶囊平行）→ 其下诗笺 → 棋盘 → 散页匣 → 道具 ——
-        const safe = getSafeLayout();
-        const gap = 8;
+        // —— 返回 → 画轴(最宽) → 棋盘+侧木牌 → 乌木匣 → 竖钮道具 ——
+        const gap = 12;
         const poemH = this.measurePoemHudHeight(verse);
         const trayH = 120;
-        const toolH = 68;
-        const toolW = 148;
+        const toolH = 88;
 
-        // 返回钮：与右上角胶囊同一水平线，顶栏中间不放任何方框/标题
         const titleY = safe.headerY;
         const btnSize = Math.max(48, Math.min(safe.headerBtnSize, L?.back?.w ?? 56));
         const backX = L?.back?.x ?? -(Design.width * 0.5 - 24 - btnSize * 0.5);
@@ -863,20 +893,15 @@ export class GameApp extends Component {
             this.uiFrames.get('btn_back'),
         ).setPosition(backX, titleY, 0);
 
-        // 经济信息 + 诗笺：整体下移，与胶囊/返回钮拉开间距
         const tier = difficultyTier(data.id);
-        const metaY = safe.contentTop - 40;
-        const eco = addLabel(this.hudLayer, 'economy', '', 16, Colors.text, 520, 24, true);
-        eco.node.setPosition(0, metaY, 0);
-        this.economyHudLabel = eco;
 
-        // 道具栏整体抬到底部安全区之上
         const toolY = safe.contentBottom + 10 + toolH * 0.5;
         const slotY = toolY + toolH * 0.5 + gap + trayH * 0.5;
-        const poemTop = metaY - 22;
+        // 画轴偏上，浮于月前
+        const poemTop = safe.contentTop - 8;
         const poemY = poemTop - poemH * 0.5;
-        const boardTop = poemY - poemH * 0.5 - gap;
-        const boardBottom = slotY + trayH * 0.5 + gap + 20;
+        const boardTop = poemY - poemH * 0.5 - gap - 6;
+        const boardBottom = slotY + trayH * 0.5 + gap + 14;
         const bh = Math.max(280, boardTop - boardBottom);
         const boardY = (boardTop + boardBottom) * 0.5;
 
@@ -888,62 +913,142 @@ export class GameApp extends Component {
         this.parkLayer = makeNode('park', p);
         this.parkLayer.active = false;
 
+        // 木牌挂在棋盘左侧（不越出安全边）
+        const plaqueX = Math.max(-(Design.width * 0.5) + 76, -bw * 0.5 - 72);
+        this.buildGameMetaBand(plaqueX, boardY + Math.min(36, bh * 0.1));
+
         this.poemChars = this.game.targetChars.slice();
         this.poemRevealed = this.game.poemRevealed;
         this.refreshEconomyHud(tier);
 
+        // 画轴略宽于匣；匣略宽于棋盘
+        const scrollW = Math.min(Design.width - 36, bw + 56);
+        const trayW = Math.min(scrollW - 28, bw + 20);
         if (isPoemFamily(this.playMode)) {
-            this.buildPoemHud(verse, bw - 28, poemY, poemH);
+            this.buildPoemHud(verse, scrollW, poemY, poemH);
+            this.playScrollOpen(this.poemHudRoot, 2.2);
         } else {
-            this.buildMatch3Hud(bw - 28, poemY, poemH);
+            this.buildMatch3Hud(scrollW, poemY, poemH);
+            this.playScrollOpen(this.poemHudRoot, 0.55);
         }
-        this.buildTrayUI(bw + 20, trayH);
+        this.buildTrayUI(trayW, trayH);
         this.spawnTiles();
         this.bindBoardInput();
-        this.buildTools(toolY, toolW, toolH);
+        this.buildTools(toolY, 0, toolH);
         this.refreshTrayVisuals();
         this.refreshTileStates();
+
+        // 棋盘/匣随画轴节奏浮现
+        if (this.nodeAlive(this.boardLayer)) {
+            const bop = this.boardLayer.getComponent(UIOpacity) || this.boardLayer.addComponent(UIOpacity);
+            bop.opacity = 0;
+            tween(bop).delay(0.9).to(0.55, { opacity: 255 }, { easing: 'sineOut' }).start();
+        }
+        if (this.nodeAlive(this.slotLayer)) {
+            const sop = this.slotLayer.getComponent(UIOpacity) || this.slotLayer.addComponent(UIOpacity);
+            sop.opacity = 0;
+            tween(sop).delay(1.15).to(0.5, { opacity: 255 }, { easing: 'sineOut' }).start();
+        }
 
         this.hudLayer.setSiblingIndex(p.children.length - 1);
         const next = this.game.currentTarget();
         const glyphMode = resolveBoardGlyphMode(this.playMode, data.id);
-        if (this.playMode === 'match3') {
-            this.tip(`点顶层盲盒进匣 · 三个相同即可消除`);
-        } else if (next) {
-            this.tip(
-                this.playMode === 'daily'
-                    ? `${Brand.modeDaily}「${verse.title}」· 下一字「${next}」`
-                    : glyphMode === 'blind'
-                      ? `${Brand.linkBlind} · 场上不露字 · 下一字「${next}」`
-                      : `点带字的顶层盒 · 下一字「${next}」`,
-            );
-        } else {
-            this.tip('理完架上剩余盲盒');
-        }
+        this.scheduleOnce(() => {
+            if (this.page !== 'game') return;
+            if (this.playMode === 'match3') {
+                this.tip(`点顶层盲盒进匣 · 三个相同即可消除`);
+            } else if (next) {
+                this.tip(
+                    this.playMode === 'daily'
+                        ? `${Brand.modeDaily}「${verse.title}」· 下一字「${next}」`
+                        : glyphMode === 'blind'
+                          ? `${Brand.linkBlind} · 场上不露字 · 下一字「${next}」`
+                          : `点带字的顶层盒 · 下一字「${next}」`,
+                );
+            } else {
+                this.tip('理完架上剩余盲盒');
+            }
+        }, 2.5);
     }
 
     /** 清匣消除顶栏说明（占原诗笺位置） */
     private buildMatch3Hud(cardW: number, centerY: number, cardH: number) {
-        const card = addBg(this.hudLayer, 'match3Hud', cardW, Math.max(72, cardH * 0.7), Colors.panel, 14);
-        card.setPosition(0, centerY, 0);
-        strokeRect(card.getComponent(Graphics)!, cardW, Math.max(72, cardH * 0.7), Colors.boardBorder, 1.5, 14);
-        addLabel(card, 't', Brand.modeMatch3, 22, Colors.brown, cardW - 40, 32, true).node.setPosition(0, 12, 0);
-        const prog = addLabel(card, 'p', '凑齐三个相同盲盒消除 · 清空即通关', 16, Colors.text, cardW - 48, 28, true);
+        const fest = isMidAutumn();
+        const lacquer = fest ? MidAutumnColors.lacquer : '#C45C3A';
+        const paper = fest ? '#FFFBF2' : '#FFFCF7';
+        const border = fest ? MidAutumnColors.gold : Colors.boardBorder;
+        const wood = fest ? '#8B5A32' : '#6B4A32';
+        const h = Math.max(78, cardH * 0.78);
+        const rollerW = 12;
+
+        const root = makeNode('match3Hud', this.hudLayer, cardW + rollerW * 2, h + 8);
+        root.setPosition(0, centerY, 0);
+        this.disableHit(root);
+
+        const sheet = makeNode('sheet', root, cardW, h);
+        const g = sheet.addComponent(Graphics);
+        g.fillColor = colorFromHex(paper, 240);
+        g.roundRect(-cardW * 0.5, -h * 0.5, cardW, h, 10);
+        g.fill();
+        g.strokeColor = colorFromHex(border, 150);
+        g.lineWidth = 1.4;
+        g.roundRect(-cardW * 0.5 + 0.5, -h * 0.5 + 0.5, cardW - 1, h - 1, 9);
+        g.stroke();
+        g.fillColor = colorFromHex(lacquer, 210);
+        g.roundRect(-cardW * 0.5 + 8, -h * 0.5 + 14, 3, h - 28, 1.5);
+        g.fill();
+
+        addLabel(sheet, 't', Brand.modeMatch3, 22, Colors.brown, cardW - 48, 32, true).node.setPosition(0, 12, 0);
+        const prog = addLabel(sheet, 'p', '凑齐三个相同盲盒消除 · 清空即通关', 16, Colors.text, cardW - 56, 28, true);
         prog.node.setPosition(0, -14, 0);
-        this.poemHudRoot = card;
+
+        const makeRoller = (name: string) => {
+            const n = makeNode(name, root, rollerW + 6, h + 14);
+            const rg = n.addComponent(Graphics);
+            rg.fillColor = colorFromHex(wood, 245);
+            rg.roundRect(-(rollerW * 0.5), -(h * 0.5 + 5), rollerW, h + 10, 5);
+            rg.fill();
+            return n;
+        };
+        const rollerL = makeRoller('rollerL');
+        const rollerR = makeRoller('rollerR');
+        (root as Node & { _scrollMeta?: { sheet: Node; rollerL: Node; rollerR: Node; half: number } })._scrollMeta = {
+            sheet,
+            rollerL,
+            rollerR,
+            half: cardW * 0.5 + rollerW * 0.35,
+        };
+
+        this.poemHudRoot = root;
         this.poemHudLabel = prog;
         this.poemHudProgressLabel = prog;
         this.poemHudBar = null;
+        this.poemNextPill = null;
     }
 
-    /** 诗笺高度：尽量压扁，保证一屏 */
+    /** 诗笺高度：横轴题签布局 */
     private measurePoemHudHeight(verse: Verse): number {
         const lineCount = Math.min(4, Math.max(1, verse.lines.length));
-        const padY = 8;
-        const headH = 30;
-        const bodyH = lineCount * 20 + 2;
-        const footH = 12;
-        return padY + headH + bodyH + footH + padY;
+        return Math.max(122, 28 + lineCount * 26 + 20);
+    }
+
+    /** 关卡木牌（挂棋盘左侧） */
+    private buildGameMetaBand(x: number, y: number) {
+        const plaque = mountLevelPlaque(this.hudLayer, x, y, () => '');
+        this.economyHudLabel = plaque.label;
+        this.economyHudRoot = plaque.root;
+    }
+
+    private refreshEconomyHud(tier = difficultyTier(this.currentLevel)) {
+        if (!this.economyHudLabel || !this.economyHudLabel.isValid) return;
+        const mode = playModeTitle(this.playMode);
+        this.economyHudLabel.string =
+            this.playMode === 'daily'
+                ? mode
+                : this.playMode === 'blind'
+                  ? mode
+                  : `第 ${this.currentLevel} 关`;
+        void tier;
     }
 
     /** 让节点不参与 UI 点击检测 */
@@ -1042,30 +1147,11 @@ export class GameApp extends Component {
     }
 
     private buildTrayUI(trayW = 660, trayH = 120) {
-        this.slotNodes = [];
-        const n = this.game.traySize;
-        const tray = addBg(this.slotLayer, 'trayBg', trayW, trayH, Colors.slotTray, 16);
-        strokeRect(tray.getComponent(Graphics)!, trayW, trayH, Colors.boardBorder, 2, 16);
-        this.disableHit(tray);
-        addLabel(this.slotLayer, 'trayTitle', '散页匣', 18, Colors.brown, 120, 28, true).node.setPosition(
-            -trayW * 0.5 + 56,
-            trayH * 0.5 - 16,
-            0,
-        );
-
-        const pad = 12;
-        const innerW = trayW - pad * 2;
-        const gap = innerW / n;
-        const slotSize = Math.min(84, gap - 6);
-        this.slotFitScale = Math.min(Design.slotScale, (slotSize * 0.72) / Design.tileSize);
-        for (let i = 0; i < n; i++) {
-            const slot = makeNode(`tray${i}`, this.slotLayer, slotSize, slotSize);
-            slot.setPosition((i - (n - 1) / 2) * gap, -4, 0);
-            const g = slot.addComponent(Graphics);
-            drawIsoSlot(g, slotSize * 0.92, Colors.slotEmpty, Colors.slotBorder, 2.2);
-            this.disableHit(slot);
-            this.slotNodes.push(slot);
-        }
+        const built = mountScholarTray(this.slotLayer, trayW, trayH, this.game.traySize, 80, {
+            onClear: () => this.onTool('tidy'),
+        });
+        this.slotNodes = built.slots;
+        this.slotFitScale = built.fitScale;
     }
 
     private getSlotScale() {
@@ -1076,34 +1162,22 @@ export class GameApp extends Component {
         return this.game?.boardScale || 1;
     }
 
-    private buildTools(toolY = -520, toolW = 148, toolH = 68) {
-        const xs = [-1.5, -0.5, 0.5, 1.5].map((i) => i * (toolW + 12));
-        const keys = ['undo', 'hint', 'tidy', 'share'];
+    private buildTools(toolY = -520, _toolW = 148, _toolH = 68) {
         const labels: Record<string, string> = {
             undo: '撤回',
             hint: '提示',
-            tidy: '整理匣',
-            share: '分享',
+            tidy: '洗牌',
+            share: '诗笺',
         };
-
-        keys.forEach((key, i) => {
-            const isShare = key === 'share';
-            const btn = addButton(
-                this.hudLayer,
-                key,
-                labels[key] || key,
-                toolW,
-                toolH,
-                isShare ? Colors.btnShare : Colors.btnMain,
-                () => this.onTool(key),
-                { fontSize: 26, textHex: Colors.brown, radius: 16 },
-            );
-            btn.node.setPosition(xs[i], toolY, 0);
-            if (key === 'undo') {
-                this.undoBtn = btn;
-                btn.setEnabled(false);
-            }
-        });
+        const tools = mountScholarTools(
+            this.hudLayer,
+            toolY,
+            ['undo', 'tidy', 'hint', 'share'],
+            labels,
+            (key) => this.onTool(key),
+        );
+        this.undoBtn = wrapScholarUndo(tools);
+        if (this.undoBtn) this.undoBtn.setEnabled(false);
     }
 
     private spawnTiles() {
@@ -1515,105 +1589,99 @@ export class GameApp extends Component {
         if (this.poemHudProgressLabel?.isValid) {
             const boardLeft = this.game.remainingBoard().length;
             const trayLeft = this.game.trayCount();
+            let char = next || `${got}/${total}`;
+            let sub = '下一个';
+            let done = got >= total;
             if (got >= total) {
-                this.poemHudProgressLabel.string =
-                    boardLeft + trayLeft > 0 ? '点走剩余盲盒通关' : '正在结算…';
+                char = boardLeft + trayLeft > 0 ? '收' : '通';
+                sub = boardLeft + trayLeft > 0 ? '收尾' : '已点亮';
             } else if (next) {
-                this.poemHudProgressLabel.string = `下一字 ${next}`;
-            } else {
-                this.poemHudProgressLabel.string = `点亮 ${got}/${total}`;
+                char = next;
+                sub = '下一个';
             }
-            this.poemHudProgressLabel.color = colorFromHex(got >= total ? Colors.highlight : Colors.text);
+            const fest = isMidAutumn();
+            const lacquer = fest ? MidAutumnColors.lacquer : '#C23A2B';
+            if (this.poemNextPill?.isValid) {
+                const sheet = this.poemNextPill.node.parent;
+                const sheetW = sheet?.getComponent(UITransform)?.width ?? 560;
+                const sheetH = sheet?.getComponent(UITransform)?.height ?? 120;
+                paintScrollNextSeal(this.poemNextPill, this.poemHudProgressLabel, {
+                    char,
+                    sub,
+                    done,
+                    sheetW,
+                    sheetH,
+                });
+            } else {
+                this.poemHudProgressLabel.string = `${sub} ${char}`;
+                this.poemHudProgressLabel.color = colorFromHex(done ? Colors.highlight : lacquer);
+            }
         }
         if (this.poemHudBar?.isValid) {
             const g = this.poemHudBar;
-            const barW = 180;
-            const barH = 5;
+            const sheet = this.poemHudBar.node.parent;
+            const barW = Math.max(200, (sheet?.getComponent(UITransform)?.width ?? 560) - 48);
+            const barH = 4;
             const ratio = got / total;
+            const fest = isMidAutumn();
             g.clear();
-            g.fillColor = colorFromHex('#E8DFD0');
-            g.roundRect(-barW * 0.5, -barH * 0.5, barW, barH, 3);
+            g.fillColor = colorFromHex('#EDE4D6', 220);
+            g.roundRect(-barW * 0.5, -barH * 0.5, barW, barH, 2);
             g.fill();
             if (ratio > 0) {
-                g.fillColor = colorFromHex(got >= total ? Colors.highlight : '#D4A574');
-                g.roundRect(-barW * 0.5, -barH * 0.5, Math.max(8, barW * ratio), barH, 3);
+                g.fillColor = colorFromHex(
+                    got >= total ? Colors.highlight : fest ? MidAutumnColors.gold : '#C9A07A',
+                );
+                g.roundRect(-barW * 0.5, -barH * 0.5, Math.max(10, barW * ratio), barH, 2);
                 g.fill();
             }
         }
     }
 
     /**
-     * 文藏笺：胶囊下方，无大底板方框（仅文字 + 细进度条）
+     * 文藏笺：锦边画轴 + 题签朱印 + 下一字方印（遮罩展开）
      */
     private buildPoemHud(verse: Verse, cardW: number, centerY: number, cardH: number) {
-        const lineCount = Math.min(4, Math.max(1, verse.lines.length));
-        const lineH = 20;
-        const padY = 6;
-        const headH = 26;
-        const bodyH = lineCount * lineH + 2;
-
-        // 透明容器，不再画白底圆角方框
-        const card = makeNode('poemHud', this.hudLayer, cardW, cardH);
-        card.setPosition(0, centerY, 0);
-        this.disableHit(card);
-        this.poemHudRoot = card;
-
-        const top = cardH * 0.5 - padY;
-        const kind = verseKindLabel(verse.kind);
-        const accentHex = verse.kind === 'poem' ? '#C45C4A' : verse.kind === 'prose' ? '#8B3A2B' : Colors.highlight;
-
-        addLabel(card, 'kind', kind, 14, accentHex, 72, 22, true).node.setPosition(-cardW * 0.5 + 40, top - 10, 0);
-        addLabel(
-            card,
-            'title',
-            `${verse.title}　${verse.source}·${verse.author}`,
-            17,
-            Colors.brown,
-            cardW - 200,
-            24,
-            true,
-        ).node.setPosition(10, top - 10, 0);
-
-        this.poemHudProgressLabel = addLabel(card, 'prog', '', 14, Colors.text, 120, 20, true);
-        this.poemHudProgressLabel.node.setPosition(cardW * 0.5 - 64, top - 10, 0);
-
-        const bodyTop = top - headH;
-        this.poemHudLabel = addLabel(
-            card,
-            'body',
+        const built = mountPoemScroll(
+            this.hudLayer,
+            verse,
+            cardW,
+            centerY,
+            cardH,
             formatVerseProgress(verse, 0),
-            18,
-            Colors.brown,
-            cardW - 24,
-            bodyH,
-            true,
         );
-        this.poemHudLabel.node.setPosition(0, bodyTop - bodyH * 0.5, 0);
-        this.poemHudLabel.overflow = Label.Overflow.SHRINK;
-        this.poemHudLabel.lineHeight = lineH;
-
-        const barNode = makeNode('bar', card, 180, 8);
-        barNode.setPosition(0, -cardH * 0.5 + padY + 4, 0);
-        this.poemHudBar = barNode.addComponent(Graphics);
+        // 保留点击：点画轴可弹朱印（开轴交互）
+        if (!built.root.getComponent(BlockInputEvents)) {
+            built.root.addComponent(BlockInputEvents);
+        }
+        this.poemHudRoot = built.root;
+        this.poemHudLabel = built.bodyLabel;
+        this.poemHudProgressLabel = built.nextLabel;
+        this.poemNextPill = built.nextSealG;
+        this.poemHudBar = built.barG;
+        attachScrollMeta(built.root, built.meta);
         this.refreshPoemHud();
+    }
+
+    /** 画轴开轴演出（右→左缓展） */
+    private playScrollOpen(root: Node | null, dur = 2.2) {
+        if (!this.nodeAlive(root)) return;
+        const meta = readScrollMeta(root);
+        if (meta) {
+            playPoemScrollOpen(meta, dur);
+            return;
+        }
+        root.setScale(0.08, 1, 1);
+        const op = root.getComponent(UIOpacity) || root.addComponent(UIOpacity);
+        op.opacity = 180;
+        tween(root).to(dur, { scale: new Vec3(1, 1, 1) }, { easing: 'cubicOut' }).start();
+        tween(op).to(dur * 0.5, { opacity: 255 }).start();
     }
 
     private tweenPromise(t: ReturnType<typeof tween>): Promise<void> {
         return new Promise((resolve) => {
             t.call(() => resolve()).start();
         });
-    }
-
-    private refreshEconomyHud(tier = difficultyTier(this.currentLevel)) {
-        if (!this.economyHudLabel || !this.economyHudLabel.isValid) return;
-        const mode = playModeTitle(this.playMode);
-        const head =
-            this.playMode === 'daily'
-                ? `${mode}`
-                : this.playMode === 'blind'
-                  ? `${mode} · 第${this.currentLevel}关`
-                  : `第${this.currentLevel}关 · 难度${tier}`;
-        this.economyHudLabel.string = head;
     }
 
     private onTool(key: string) {
@@ -2103,7 +2171,9 @@ export class GameApp extends Component {
         addLabel(
             panel,
             'done',
-            `诗文已点亮 · 本关${verseKindLabel(poem.kind)}`,
+            isMidAutumn()
+                ? `${MidAutumnCopy.winSeal} · 本关${verseKindLabel(poem.kind)}`
+                : `诗文已点亮 · 本关${verseKindLabel(poem.kind)}`,
             22,
             Colors.highlight,
             560,
